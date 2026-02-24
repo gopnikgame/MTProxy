@@ -12,8 +12,15 @@
 
 ### Автоматическая установка (рекомендуется)
 
+**Способ 1** - Скачать и выполнить напрямую:
 ```bash
-wget https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh && sudo bash install_official.sh
+curl -sSL https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh | sudo bash
+```
+
+**Способ 2** - Скачать файл с перезаписью:
+```bash
+wget -O install_official.sh https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh
+sudo bash install_official.sh
 ```
 
 ### С интеграцией Remnawave (Nginx SNI)

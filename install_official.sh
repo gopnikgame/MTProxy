@@ -462,29 +462,30 @@ EOF
 
 create_systemd_service() {
     print_header "Создание systemd сервиса"
-    
+
     # Загружаем конфигурацию
     source "$INSTALL_DIR/.env"
-    
-    # Формируем команду запуска
+
+    # Формируем команду запуска (ПРАВИЛЬНЫЙ ПОРЯДОК АРГУМЕНТОВ!)
     CMD="/opt/MTProxy/objs/bin/mtproto-proxy"
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
     CMD="$CMD -S $DISPLAY_SECRET"
-    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret"
-    CMD="$CMD /opt/MTProxy/run/proxy-multi.conf"
     CMD="$CMD -M $WORKERS"
-    
+
     # Добавляем AD Tag если указан
-    if [ -n "$AD_TAG" ]; then
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
-    
+
     # Добавляем NAT если указан
     if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
         CMD="$CMD --nat-info $NAT_IP"
     fi
+
+    # ВАЖНО: --aes-pwd и конфиг должны быть В КОНЦЕ и именно в таком порядке!
+    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
     
     # Создаем service файл
     cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF

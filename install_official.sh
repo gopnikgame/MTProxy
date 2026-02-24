@@ -95,9 +95,8 @@ install_dependencies() {
         libssl-dev \
         zlib1g-dev \
         certbot \
-        xxd \
-        systemctl
-    
+        xxd
+
     print_success "Все зависимости установлены"
 }
 

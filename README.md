@@ -1,5 +1,278 @@
-# MTProxy
-Simple MT-Proto proxy
+# MTProxy - Официальная реализация от Telegram
+
+[![GitHub](https://img.shields.io/badge/GitHub-MTProxy-blue?logo=github)](https://github.com/TelegramMessenger/MTProxy)
+[![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%2B-orange?logo=ubuntu)](https://ubuntu.com/)
+[![License](https://img.shields.io/badge/License-GPL%20v2-green.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
+
+**Официальный MTProto прокси от Telegram** с автоматической установкой и интеграцией с Remnawave для Ubuntu.
+
+---
+
+## 🚀 Быстрый старт
+
+### Автоматическая установка (рекомендуется)
+
+```bash
+# Скачать и запустить установку
+wget https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh
+sudo bash install_official.sh
+```
+
+### С интеграцией Remnawave (Nginx SNI)
+
+```bash
+# 1. Установить MTProxy
+sudo bash install_official.sh
+
+# 2. Настроить интеграцию с Remnawave
+sudo bash setup_remnawave_integration.sh
+```
+
+**Готово!** 🎉 Получите ссылку для подключения: `tg://proxy?server=...&port=443&secret=...`
+
+---
+
+## 📚 Документация
+
+### Основные документы
+- 📘 [**Быстрый старт (5 минут)**](QUICKSTART.md) - Минимальная инструкция для быстрой установки
+- 📗 [**Полная документация**](README_OFFICIAL.md) - Подробное руководство со всеми деталями
+- 📙 [**Примеры конфигурации**](CONFIGURATION_EXAMPLES.md) - Различные сценарии настройки
+- ❓ [**FAQ (Частые вопросы)**](FAQ.md) - Ответы на частые вопросы
+
+### Для кого эта документация
+
+| Документ | Уровень | Время | Для кого |
+|----------|---------|-------|----------|
+| [QUICKSTART.md](QUICKSTART.md) | Новичок | 5 мин | Хочу быстро установить и запустить |
+| [README_OFFICIAL.md](README_OFFICIAL.md) | Средний | 20 мин | Хочу понять как всё работает |
+| [CONFIGURATION_EXAMPLES.md](CONFIGURATION_EXAMPLES.md) | Продвинутый | 30 мин | Хочу настроить под свои нужды |
+
+---
+
+## ✨ Особенности
+
+### ✅ Официальная реализация
+- Написана на C (высокая производительность)
+- Поддержка Multi-core (несколько воркеров)
+- Официальная поддержка от Telegram
+- Регулярные обновления
+
+### ✅ Защита и безопасность
+- Random Padding (защита от DPI)
+- Поддержка TLS (HTTPS маскировка)
+- Множественные секреты
+- Security hardening в systemd
+
+### ✅ Интеграция с Remnawave
+- Nginx SNI (мультидоменность)
+- Автоматическая настройка SSL
+- Совместная работа с другими сервисами
+- Единая точка входа (порт 443)
+
+### ✅ Удобство использования
+- Автоматическая установка одной командой
+- Интерактивные скрипты настройки
+- Systemd интеграция (автозапуск)
+- Скрипт управления с меню
+- Автообновление конфигурации Telegram
+
+### ✅ Монетизация
+- Поддержка AD Tag
+- Регистрация в @MTProxybot
+- Статистика использования
+
+---
+
+## 🛠 Управление
+
+### Интерактивное меню
+
+```bash
+bash manage_mtproxy_official.sh
+```
+
+### Основные команды
+
+```bash
+# Статус и управление
+bash manage_mtproxy_official.sh status      # Статус сервиса
+bash manage_mtproxy_official.sh start       # Запустить
+bash manage_mtproxy_official.sh stop        # Остановить
+bash manage_mtproxy_official.sh restart     # Перезапустить
+
+# Информация и мониторинг
+bash manage_mtproxy_official.sh info        # Показать ссылку подключения
+bash manage_mtproxy_official.sh stats       # Статистика прокси
+bash manage_mtproxy_official.sh logs        # Просмотр логов
+
+# Настройка
+bash manage_mtproxy_official.sh change-secret   # Изменить секрет
+bash manage_mtproxy_official.sh change-ad-tag   # Изменить AD Tag
+bash manage_mtproxy_official.sh change-ports    # Изменить порты
+bash manage_mtproxy_official.sh change-workers  # Изменить воркеры
+
+# Обновление
+bash manage_mtproxy_official.sh update-config  # Обновить конфигурацию Telegram
+bash manage_mtproxy_official.sh rebuild        # Пересобрать MTProxy
+```
+
+### Systemd
+
+```bash
+systemctl status mtproxy      # Статус
+systemctl restart mtproxy     # Перезапуск
+journalctl -u mtproxy -f      # Логи
+```
+
+---
+
+## 📋 Требования
+
+### Операционная система
+- **Ubuntu 20.04+** (рекомендуется 22.04 LTS)
+
+### Зависимости (устанавливаются автоматически)
+- `git`, `curl`, `build-essential`
+- `libssl-dev`, `zlib1g-dev`
+- `certbot`, `xxd`
+
+### Сеть
+- Открытый порт 443 (TCP)
+- Доменное имя (для интеграции с Remnawave)
+
+---
+
+## 🔗 Подключение клиентов
+
+### Ссылка для подключения
+
+```
+tg://proxy?server=proxy.example.com&port=443&secret=dd...
+```
+
+### Инструкция для пользователей
+1. Откройте ссылку на устройстве с Telegram
+2. Нажмите "Connect Proxy"
+3. Готово!
+
+### Регистрация в @MTProxybot
+
+1. Откройте [@MTProxybot](https://t.me/MTProxybot)
+2. `/newproxy`
+3. Отправьте ссылку прокси
+4. Получите AD Tag для монетизации
+
+---
+
+## 📊 Архитектура
+
+### Standalone режим
+```
+Internet:443 → MTProxy
+```
+
+### С интеграцией Remnawave (Nginx SNI)
+```
+Internet:443 → Nginx (SNI routing) → Backend → MTProxy
+                 ↓
+            [Другие сервисы]
+            - XRay Reality
+            - Panel
+            - etc.
+```
+
+---
+
+## 🔄 Обновление
+
+### Автоматическое обновление конфигурации Telegram
+
+Настроено по умолчанию (cron, каждый день в 3:00):
+```bash
+# Проверить cron
+crontab -l | grep update-configs
+```
+
+### Ручное обновление
+```bash
+bash manage_mtproxy_official.sh update-config
+```
+
+### Обновление MTProxy (пересборка)
+```bash
+bash manage_mtproxy_official.sh rebuild
+```
+
+---
+
+## 🐛 Устранение проблем
+
+### Сервис не запускается
+```bash
+# Проверить логи
+journalctl -u mtproxy -n 50
+
+# Перезапустить
+systemctl restart mtproxy
+```
+
+### Клиенты не могут подключиться
+```bash
+# Проверить порт
+netstat -tuln | grep :443
+
+# Открыть firewall
+sudo ufw allow 443/tcp
+```
+
+### Подробное руководство
+См. раздел "Устранение проблем" в [README_OFFICIAL.md](README_OFFICIAL.md)
+
+---
+
+## 📁 Структура файлов
+
+```
+/opt/MTProxy/
+├── .env                      # Конфигурация
+├── objs/bin/mtproto-proxy    # Бинарник
+├── run/                      # Рабочая директория
+│   ├── proxy-secret          # Секрет Telegram
+│   ├── proxy-multi.conf      # Конфигурация серверов
+│   └── secret.txt            # Секрет пользователя
+└── proxy_link.txt            # Ссылка для подключения
+
+/etc/systemd/system/
+└── mtproxy.service           # Systemd сервис
+```
+
+---
+
+## 🤝 Вклад в проект
+
+Вклад приветствуется! Пожалуйста:
+1. Fork репозитория
+2. Создайте ветку (`git checkout -b feature/amazing-feature`)
+3. Commit изменения (`git commit -m 'Add amazing feature'`)
+4. Push в ветку (`git push origin feature/amazing-feature`)
+5. Откройте Pull Request
+
+---
+
+## 📄 Лицензия
+
+- **MTProxy**: GPL v2 и LGPL v2 (от Telegram)
+- **Скрипты установки**: MIT License
+
+---
+
+## 📖 Оригинальная документация Telegram
+
+Ниже приведена оригинальная документация от Telegram для ручной установки.
+
+<details>
+<summary><b>Развернуть оригинальную документацию</b></summary>
 
 ## Building
 Install dependencies, you would need common set of tools for building from source, and development packages for `openssl` and `zlib`.
@@ -98,6 +371,31 @@ systemctl daemon-reload
 systemctl restart MTProxy.service
 # Check status, it should be active
 systemctl status MTProxy.service
+```
+5. Enable it, to autostart on boot:
+```bash
+systemctl enable MTProxy.service
+```
+
+</details>
+
+---
+
+## ⭐ Поддержка проекта
+
+Если проект помог вам, поставьте звезду ⭐ на GitHub!
+
+---
+
+## ✉️ Контакты
+
+- **Issues**: [GitHub Issues](https://github.com/gopnikgame/MTProxy/issues)
+- **Telegram**: [@gopnikgame](https://t.me/gopnikgame)
+- **MTProxybot**: [@MTProxybot](https://t.me/MTProxybot)
+
+---
+
+**MTProxy Official** - Автоматическая установка официального MTProxy от Telegram для Ubuntu
 ```
 5. Enable it, to autostart service after reboot:
 ```bash

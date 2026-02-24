@@ -1,3 +1,36 @@
+# Compiled objects
 objs
 dep
+
+# Old implementation (Python-based)
 /remnawave
+
+# Local configuration (created during installation)
+.env
+*.env.backup.*
+proxy_link.txt
+remnawave_integration.txt
+
+# Secrets and keys
+proxy-secret
+proxy-multi.conf
+secret.txt
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backups
+*.backup.*
+backup/
+/.vs

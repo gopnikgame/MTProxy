@@ -13,9 +13,7 @@
 ### Автоматическая установка (рекомендуется)
 
 ```bash
-# Скачать и запустить установку
-wget https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh
-sudo bash install_official.sh
+wget https://raw.githubusercontent.com/gopnikgame/MTProxy/master/install_official.sh && sudo bash install_official.sh
 ```
 
 ### С интеграцией Remnawave (Nginx SNI)
@@ -189,6 +187,23 @@ bash manage_mtproxy_official.sh rebuild
 ---
 
 ## 🐛 Устранение проблем
+
+### Проблемы с установкой зависимостей (apt)
+
+Если возникает ошибка `systemd-sysv` или проблемы с зависимостями пакетов:
+
+```bash
+# Исправить broken packages
+sudo apt-get install -f
+sudo dpkg --configure -a
+
+# Обновить систему
+sudo apt-get update
+sudo apt-get upgrade -y
+
+# Повторить установку
+sudo bash install_official.sh
+```
 
 ### Сервис не запускается
 ```bash

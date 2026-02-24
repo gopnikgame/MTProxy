@@ -83,21 +83,46 @@ check_ubuntu() {
 
 install_dependencies() {
     print_header "Установка зависимостей"
-    
+
     print_info "Обновление списка пакетов..."
     apt-get update -qq
-    
-    print_info "Установка необходимых пакетов..."
-    apt-get install -y \
-        git \
-        curl \
-        build-essential \
-        libssl-dev \
-        zlib1g-dev \
-        certbot \
-        xxd
 
-    print_success "Все зависимости установлены"
+    # Попытка исправить возможные проблемы с зависимостями
+    print_info "Проверка целостности пакетов..."
+    if ! apt-get install -f -y > /dev/null 2>&1; then
+        print_warning "Обнаружены проблемы с зависимостями, попытка исправления..."
+        dpkg --configure -a
+        apt-get install -f -y
+    fi
+
+    print_info "Установка необходимых пакетов..."
+
+    # Устанавливаем пакеты по одному, чтобы определить проблемный
+    PACKAGES="git curl build-essential libssl-dev zlib1g-dev certbot xxd"
+
+    for package in $PACKAGES; do
+        if ! dpkg -l | grep -q "^ii.*$package"; then
+            print_info "Установка $package..."
+            if ! apt-get install -y "$package" 2>/dev/null; then
+                print_warning "Не удалось установить $package, но продолжаем..."
+            fi
+        else
+            print_info "$package уже установлен"
+        fi
+    done
+
+    # Проверяем критичные зависимости
+    if ! command -v git &> /dev/null; then
+        print_error "Git не установлен и не может быть установлен"
+        exit 1
+    fi
+
+    if ! command -v make &> /dev/null; then
+        print_error "make не установлен (из build-essential)"
+        exit 1
+    fi
+
+    print_success "Все критичные зависимости установлены"
 }
 
 ################################################################################

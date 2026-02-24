@@ -82,47 +82,118 @@ check_ubuntu() {
 ################################################################################
 
 install_dependencies() {
-    print_header "Установка зависимостей"
+    print_header "Проверка зависимостей"
 
-    print_info "Обновление списка пакетов..."
-    apt-get update -qq
+    # Проверяем критичные команды/инструменты
+    print_info "Проверка необходимых инструментов..."
 
-    # Попытка исправить возможные проблемы с зависимостями
-    print_info "Проверка целостности пакетов..."
-    if ! apt-get install -f -y > /dev/null 2>&1; then
-        print_warning "Обнаружены проблемы с зависимостями, попытка исправления..."
-        dpkg --configure -a
-        apt-get install -f -y
+    local ALL_OK=true
+    local MISSING_PACKAGES=""
+
+    # Проверяем наличие критичных команд
+    if ! command -v git &> /dev/null; then
+        print_warning "git не найден"
+        MISSING_PACKAGES="$MISSING_PACKAGES git"
+        ALL_OK=false
+    else
+        print_success "git установлен"
     fi
 
-    print_info "Установка необходимых пакетов..."
-
-    # Устанавливаем пакеты по одному, чтобы определить проблемный
-    PACKAGES="git curl build-essential libssl-dev zlib1g-dev certbot xxd"
-
-    for package in $PACKAGES; do
-        if ! dpkg -l | grep -q "^ii.*$package"; then
-            print_info "Установка $package..."
-            if ! apt-get install -y "$package" 2>/dev/null; then
-                print_warning "Не удалось установить $package, но продолжаем..."
-            fi
-        else
-            print_info "$package уже установлен"
-        fi
-    done
-
-    # Проверяем критичные зависимости
-    if ! command -v git &> /dev/null; then
-        print_error "Git не установлен и не может быть установлен"
-        exit 1
+    if ! command -v curl &> /dev/null; then
+        print_warning "curl не найден"
+        MISSING_PACKAGES="$MISSING_PACKAGES curl"
+        ALL_OK=false
+    else
+        print_success "curl установлен"
     fi
 
     if ! command -v make &> /dev/null; then
-        print_error "make не установлен (из build-essential)"
+        print_warning "make не найден"
+        MISSING_PACKAGES="$MISSING_PACKAGES build-essential"
+        ALL_OK=false
+    else
+        print_success "make установлен"
+    fi
+
+    if ! command -v gcc &> /dev/null; then
+        print_warning "gcc не найден"
+        MISSING_PACKAGES="$MISSING_PACKAGES build-essential"
+        ALL_OK=false
+    else
+        print_success "gcc установлен"
+    fi
+
+    # Проверяем dev библиотеки (по наличию header файлов)
+    if [ ! -f "/usr/include/openssl/ssl.h" ]; then
+        print_warning "OpenSSL dev headers не найдены"
+        MISSING_PACKAGES="$MISSING_PACKAGES libssl-dev"
+        ALL_OK=false
+    else
+        print_success "libssl-dev установлен"
+    fi
+
+    if [ ! -f "/usr/include/zlib.h" ]; then
+        print_warning "zlib dev headers не найдены"
+        MISSING_PACKAGES="$MISSING_PACKAGES zlib1g-dev"
+        ALL_OK=false
+    else
+        print_success "zlib1g-dev установлен"
+    fi
+
+    if ! command -v xxd &> /dev/null; then
+        print_warning "xxd не найден"
+        MISSING_PACKAGES="$MISSING_PACKAGES xxd"
+        ALL_OK=false
+    else
+        print_success "xxd установлен"
+    fi
+
+    # Если что-то отсутствует, пытаемся установить
+    if [ "$ALL_OK" = false ]; then
+        echo
+        print_warning "Обнаружены отсутствующие зависимости"
+        print_info "Попытка установки: $MISSING_PACKAGES"
+        echo
+
+        # Обновляем список пакетов
+        apt-get update -qq 2>/dev/null || true
+
+        # Пытаемся установить отсутствующие пакеты
+        for package in $MISSING_PACKAGES; do
+            print_info "Установка $package..."
+            if apt-get install -y "$package" 2>&1 | grep -q "E: "; then
+                print_error "Не удалось установить $package"
+                print_info "Попробуйте установить вручную: sudo apt-get install $package"
+                exit 1
+            else
+                print_success "$package установлен"
+            fi
+        done
+    fi
+
+    # Финальная проверка критичных инструментов
+    echo
+    print_info "Финальная проверка критичных инструментов..."
+
+    if ! command -v git &> /dev/null; then
+        print_error "Git не установлен. Установка невозможна."
+        echo "Выполните вручную: sudo apt-get install git"
         exit 1
     fi
 
-    print_success "Все критичные зависимости установлены"
+    if ! command -v make &> /dev/null || ! command -v gcc &> /dev/null; then
+        print_error "Компилятор (gcc/make) не установлен. Установка невозможна."
+        echo "Выполните вручную: sudo apt-get install build-essential"
+        exit 1
+    fi
+
+    if ! command -v curl &> /dev/null; then
+        print_error "curl не установлен. Установка невозможна."
+        echo "Выполните вручную: sudo apt-get install curl"
+        exit 1
+    fi
+
+    print_success "Все необходимые инструменты доступны!"
 }
 
 ################################################################################

@@ -14,6 +14,8 @@ MTPROXY_REPO="https://github.com/TelegramMessenger/MTProxy"
 INSTALL_DIR="/opt/MTProxy"
 SERVICE_NAME="mtproxy"
 REMNANODE_DIR="/opt/remnanode"
+# Директория расположения install_official.sh (для поиска смежных скриптов)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Цвета для вывода
 readonly RED='\033[0;31m'
@@ -401,7 +403,10 @@ interactive_configuration() {
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
         USE_NAT="yes"
-        read -p "Внешний IP адрес [${NAT_IP:-$DETECTED_IP}]: " input
+        DETECTED_LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I | awk '{print $1}')
+        read -p "Локальный (внутренний) IP [${NAT_LOCAL_IP:-$DETECTED_LOCAL_IP}]: " input
+        NAT_LOCAL_IP=${input:-${NAT_LOCAL_IP:-$DETECTED_LOCAL_IP}}
+        read -p "Внешний (глобальный) IP адрес [${NAT_IP:-$DETECTED_IP}]: " input
         NAT_IP=${input:-${NAT_IP:-$DETECTED_IP}}
     else
         USE_NAT="no"
@@ -448,6 +453,7 @@ AD_TAG=${AD_TAG}
 
 # Network
 USE_NAT=$USE_NAT
+NAT_LOCAL_IP=${NAT_LOCAL_IP}
 NAT_IP=${NAT_IP}
 USE_DOMAIN=$USE_DOMAIN
 DOMAIN_NAME=${DOMAIN_NAME}
@@ -471,7 +477,7 @@ create_systemd_service() {
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
-    CMD="$CMD -S $DISPLAY_SECRET"
+    CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
     # Добавляем AD Tag если указан
@@ -479,9 +485,14 @@ create_systemd_service() {
         CMD="$CMD -P $AD_TAG"
     fi
 
-    # Добавляем NAT если указан
-    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
-        CMD="$CMD --nat-info $NAT_IP"
+    # NAT: формат <local-addr>:<global-addr> (требуется C-кодом mtproto-proxy)
+    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ] && [ -n "$NAT_LOCAL_IP" ]; then
+        CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
+    fi
+
+    # TLS-режим (fakeTLS): -D включает TLS-транспорт и требуется для SNI-роутинга
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CMD="$CMD -D $DOMAIN_NAME"
     fi
 
     # ВАЖНО: --aes-pwd и конфиг должны быть В КОНЦЕ и именно в таком порядке!
@@ -572,6 +583,36 @@ EOF
 }
 
 ################################################################################
+# Настройка скриптов управления
+################################################################################
+
+setup_management_scripts() {
+    print_header "Настройка скриптов управления"
+
+    # Скрипты управления должны лежать рядом с install_official.sh.
+    # После клонирования репозитория Telegram в /opt/MTProxy копируем их туда,
+    # чтобы они были доступны вместе с бинарником и конфигурацией.
+    for script in manage_mtproxy_official.sh setup_remnawave_integration.sh; do
+        if [ -f "$SCRIPT_DIR/$script" ]; then
+            cp "$SCRIPT_DIR/$script" "$INSTALL_DIR/$script"
+            chmod +x "$INSTALL_DIR/$script"
+            print_success "Скрипт установлен: $INSTALL_DIR/$script"
+        else
+            print_warning "Скрипт не найден: $SCRIPT_DIR/$script"
+            print_info "Ожидался рядом с install_official.sh"
+        fi
+    done
+
+    # Создаём симлинк /usr/local/bin/mtproxy → manage_mtproxy_official.sh
+    # Позволяет запускать управление командой: mtproxy
+    if [ -f "$INSTALL_DIR/manage_mtproxy_official.sh" ]; then
+        ln -sf "$INSTALL_DIR/manage_mtproxy_official.sh" /usr/local/bin/mtproxy
+        print_success "Симлинк создан: /usr/local/bin/mtproxy"
+        print_info "Управление MTProxy доступно командой: mtproxy"
+    fi
+}
+
+################################################################################
 # Интеграция с Remnawave
 ################################################################################
 
@@ -596,11 +637,14 @@ integrate_with_remnawave() {
     fi
     
     # Запускаем отдельный скрипт интеграции
-    if [ -f "./setup_remnawave_integration.sh" ]; then
-        bash ./setup_remnawave_integration.sh
+    # Приоритет: /opt/MTProxy/ (куда setup_management_scripts скопировал скрипт)
+    if [ -f "$INSTALL_DIR/setup_remnawave_integration.sh" ]; then
+        bash "$INSTALL_DIR/setup_remnawave_integration.sh"
+    elif [ -f "$SCRIPT_DIR/setup_remnawave_integration.sh" ]; then
+        bash "$SCRIPT_DIR/setup_remnawave_integration.sh"
     else
         print_warning "Скрипт интеграции не найден"
-        print_info "Для интеграции с Remnawave используйте setup_remnawave_integration.sh"
+        print_info "Скопируйте setup_remnawave_integration.sh в $INSTALL_DIR/ и повторите"
     fi
 }
 
@@ -667,9 +711,21 @@ print_connection_info() {
         SERVER_ADDR=$(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}')
     fi
     
+    # Формируем клиентский секрет для ссылки:
+    # - TLS/fakeTLS (USE_DOMAIN=yes): ee + 32 hex
+    # - Random Padding (USE_DD_PREFIX=yes): dd + 32 hex
+    # - Иначе: plain 32 hex
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CLIENT_SECRET="ee${SECRET}"
+    elif [ "$USE_DD_PREFIX" = "yes" ]; then
+        CLIENT_SECRET="dd${SECRET}"
+    else
+        CLIENT_SECRET="$SECRET"
+    fi
+
     # Формируем ссылку для подключения
-    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$EXTERNAL_PORT&secret=$DISPLAY_SECRET"
-    
+    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$EXTERNAL_PORT&secret=$CLIENT_SECRET"
+
     echo
     echo "═══════════════════════════════════════════════════════════"
     echo -e "${GREEN}✓ MTProxy успешно установлен и запущен!${NC}"
@@ -678,9 +734,9 @@ print_connection_info() {
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
     echo "   Сервер:     $SERVER_ADDR"
     echo "   Порт:       $EXTERNAL_PORT"
-    echo "   Секрет:     $DISPLAY_SECRET"
+    echo "   Секрет:     $CLIENT_SECRET"
     echo "   Воркеры:    $WORKERS"
-    if [ -n "$AD_TAG" ]; then
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         echo "   AD Tag:     $AD_TAG"
     fi
     echo
@@ -701,6 +757,7 @@ print_connection_info() {
     echo "   4. Получите AD Tag для монетизации"
     echo
     echo -e "${CYAN}🛠 УПРАВЛЕНИЕ:${NC}"
+    echo "   Менеджер:     mtproxy  (симлинк → $INSTALL_DIR/manage_mtproxy_official.sh)"
     echo "   Статус:       systemctl status $SERVICE_NAME"
     echo "   Остановка:    systemctl stop $SERVICE_NAME"
     echo "   Запуск:       systemctl start $SERVICE_NAME"
@@ -709,8 +766,8 @@ print_connection_info() {
     echo "   Статистика:   curl http://127.0.0.1:$STATS_PORT/stats"
     echo
     echo -e "${CYAN}📊 МОНИТОРИНГ:${NC}"
-    echo "   bash manage_mtproxy_official.sh status"
-    echo "   bash manage_mtproxy_official.sh stats"
+    echo "   mtproxy status"
+    echo "   mtproxy stats"
     echo
     echo -e "${CYAN}📁 ФАЙЛЫ:${NC}"
     echo "   Конфигурация: $INSTALL_DIR/.env"
@@ -726,7 +783,7 @@ MTProxy Connection Link
 
 Server:  $SERVER_ADDR
 Port:    $EXTERNAL_PORT
-Secret:  $DISPLAY_SECRET
+Secret:  $CLIENT_SECRET
 
 Connection Link:
 $PROXY_LINK
@@ -758,6 +815,7 @@ main() {
     # Установка
     install_dependencies
     clone_and_build_mtproxy
+    setup_management_scripts
     download_telegram_configs
     interactive_configuration
     create_systemd_service

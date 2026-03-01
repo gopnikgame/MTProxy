@@ -272,16 +272,28 @@ show_connection_info() {
         SERVER_ADDR=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
     fi
     
-    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$EXTERNAL_PORT&secret=$DISPLAY_SECRET"
-    
+    # Определяем секрет для клиентской ссылки:
+    # - TLS/fakeTLS режим (USE_DOMAIN=yes): ee-префикс (ee + 32 hex)
+    # - Random Padding (USE_DD_PREFIX=yes): dd-префикс
+    # - Иначе: plain 32 hex
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CLIENT_SECRET="ee${SECRET}"
+    elif [ "$USE_DD_PREFIX" = "yes" ]; then
+        CLIENT_SECRET="dd${SECRET}"
+    else
+        CLIENT_SECRET="$SECRET"
+    fi
+
+    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$EXTERNAL_PORT&secret=$CLIENT_SECRET"
+
     echo
     echo "═══════════════════════════════════════════════════════════"
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
     echo "   Сервер:     $SERVER_ADDR"
     echo "   Порт:       $EXTERNAL_PORT"
-    echo "   Секрет:     $DISPLAY_SECRET"
+    echo "   Секрет:     $CLIENT_SECRET"
     echo "   Воркеры:    $WORKERS"
-    if [ -n "$AD_TAG" ]; then
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         echo "   AD Tag:     $AD_TAG"
     fi
     echo
@@ -369,18 +381,25 @@ change_secret() {
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
-    CMD="$CMD -S $DISPLAY_SECRET"
-    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret"
-    CMD="$CMD /opt/MTProxy/run/proxy-multi.conf"
+    # -S принимает ровно 32 hex-символа (без dd/ee префикса)
+    CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
-    
-    if [ -n "$AD_TAG" ]; then
+
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
-    
-    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
-        CMD="$CMD --nat-info $NAT_IP"
+
+    # Формат --nat-info: <local-addr>:<global-addr>
+    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ] && [ -n "$NAT_LOCAL_IP" ]; then
+        CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
+
+    # TLS-режим для SNI-роутинга через Nginx
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CMD="$CMD -D $DOMAIN_NAME"
+    fi
+
+    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
     
     # Обновляем service файл
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
@@ -435,30 +454,34 @@ change_ad_tag() {
     
     # Загружаем обновленную конфигурацию
     source "$CONFIG_FILE"
-    
+
     # Обновляем systemd сервис
     print_info "Обновление systemd сервиса..."
-    
+
     CMD="/opt/MTProxy/objs/bin/mtproto-proxy"
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
-    CMD="$CMD -S $DISPLAY_SECRET"
-    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret"
-    CMD="$CMD /opt/MTProxy/run/proxy-multi.conf"
+    CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
-    
-    if [ -n "$AD_TAG" ]; then
+
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
-    
-    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
-        CMD="$CMD --nat-info $NAT_IP"
+
+    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ] && [ -n "$NAT_LOCAL_IP" ]; then
+        CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
-    
+
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CMD="$CMD -D $DOMAIN_NAME"
+    fi
+
+    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
+
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
     systemctl daemon-reload
-    
+
     restart_service
 }
 
@@ -502,24 +525,28 @@ change_ports() {
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
-    CMD="$CMD -S $DISPLAY_SECRET"
-    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret"
-    CMD="$CMD /opt/MTProxy/run/proxy-multi.conf"
+    CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
-    
-    if [ -n "$AD_TAG" ]; then
+
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
-    
-    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
-        CMD="$CMD --nat-info $NAT_IP"
+
+    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ] && [ -n "$NAT_LOCAL_IP" ]; then
+        CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
-    
+
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CMD="$CMD -D $DOMAIN_NAME"
+    fi
+
+    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
+
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
     systemctl daemon-reload
-    
+
     restart_service
-    
+
     echo
     show_connection_info
 }
@@ -551,32 +578,36 @@ change_workers() {
     sed -i "s/^WORKERS=.*/WORKERS=$NEW_WORKERS/" "$CONFIG_FILE"
     
     print_success "Количество воркеров обновлено: $NEW_WORKERS"
-    
+
     # Обновляем systemd сервис
     print_info "Обновление systemd сервиса..."
-    
+
     source "$CONFIG_FILE"
-    
+
     CMD="/opt/MTProxy/objs/bin/mtproto-proxy"
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
-    CMD="$CMD -S $DISPLAY_SECRET"
-    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret"
-    CMD="$CMD /opt/MTProxy/run/proxy-multi.conf"
+    CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
-    
-    if [ -n "$AD_TAG" ]; then
+
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
-    
-    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
-        CMD="$CMD --nat-info $NAT_IP"
+
+    if [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ] && [ -n "$NAT_LOCAL_IP" ]; then
+        CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
-    
+
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
+        CMD="$CMD -D $DOMAIN_NAME"
+    fi
+
+    CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
+
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
     systemctl daemon-reload
-    
+
     restart_service
 }
 
@@ -676,6 +707,13 @@ uninstall() {
         print_success "Cron задача удалена"
     fi
     
+    # Удаляем симлинк
+    if [ -L /usr/local/bin/mtproxy ]; then
+        print_info "Удаление симлинка /usr/local/bin/mtproxy..."
+        rm -f /usr/local/bin/mtproxy
+        print_success "Симлинк удален"
+    fi
+
     # Удаляем файлы
     if [ -d "$INSTALL_DIR" ]; then
         print_info "Удаление файлов..."
@@ -685,6 +723,30 @@ uninstall() {
     
     echo
     print_success "MTProxy полностью удален"
+}
+
+################################################################################
+# Интеграция с Remnawave
+################################################################################
+
+run_remnawave_integration() {
+    print_header "Интеграция с Remnawave (Nginx SNI)"
+
+    local INTEGRATION_SCRIPT="$INSTALL_DIR/setup_remnawave_integration.sh"
+
+    if [ ! -f "$INTEGRATION_SCRIPT" ]; then
+        print_error "Скрипт интеграции не найден: $INTEGRATION_SCRIPT"
+        print_info "Скопируйте setup_remnawave_integration.sh в $INSTALL_DIR/ и повторите"
+        return 1
+    fi
+
+    if [ "$EUID" -ne 0 ]; then
+        print_error "Интеграция требует прав root"
+        print_info "Запустите: sudo mtproxy  или  sudo bash $INTEGRATION_SCRIPT"
+        return 1
+    fi
+
+    bash "$INTEGRATION_SCRIPT"
 }
 
 ################################################################################
@@ -767,6 +829,11 @@ show_menu() {
         echo " 11) Пересобрать MTProxy"
         echo " 12) Удалить MTProxy"
         echo
+        echo "═══════════════════════════════════════════════════════════"
+        echo " ИНТЕГРАЦИЯ"
+        echo "═══════════════════════════════════════════════════════════"
+        echo " 13) Настроить интеграцию с Remnawave (Nginx SNI)"
+        echo
         echo "  0) Выход"
         echo
         echo "═══════════════════════════════════════════════════════════"
@@ -785,6 +852,7 @@ show_menu() {
             10) update_telegram_config ;;
             11) rebuild_binary ;;
             12) uninstall; break ;;
+            13) run_remnawave_integration ;;
             0) break ;;
             *) print_error "Неверный выбор" ;;
         esac
@@ -856,6 +924,9 @@ else
         rebuild)
             rebuild_binary
             ;;
+        setup-remnawave)
+            run_remnawave_integration
+            ;;
         uninstall)
             uninstall
             ;;
@@ -879,6 +950,7 @@ else
             echo "  change-ports     - Изменить порты"
             echo "  change-workers   - Изменить количество воркеров"
             echo "  rebuild          - Пересобрать MTProxy"
+            echo "  setup-remnawave  - Настроить интеграцию с Remnawave (Nginx SNI)"
             echo "  uninstall        - Удалить MTProxy"
             echo "  help             - Показать эту справку"
             echo

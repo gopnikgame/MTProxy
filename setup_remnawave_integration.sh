@@ -13,6 +13,8 @@ MTPROXY_DIR="/opt/MTProxy"
 REMNANODE_DIR="/opt/remnanode"
 SITES_AVAILABLE="$REMNANODE_DIR/sites-available"
 STREAM_CONF="$REMNANODE_DIR/stream.conf"
+# Имя Docker-контейнера с Nginx (Remnawave запускается через docker-compose)
+NGINX_CONTAINER="remnawave-nginx"
 
 # Цвета
 readonly RED='\033[0;31m'
@@ -77,13 +79,29 @@ check_mtproxy() {
 check_remnawave() {
     if [ ! -d "$REMNANODE_DIR" ]; then
         print_error "Remnawave не найдена в $REMNANODE_DIR"
+        print_info "Укажите правильный путь, отредактировав переменную REMNANODE_DIR в начале скрипта"
         exit 1
     fi
-    
+
     if [ ! -f "$REMNANODE_DIR/docker-compose.yml" ]; then
         print_error "Docker Compose конфигурация Remnawave не найдена"
         exit 1
     fi
+
+    # Nginx работает в Docker контейнере — проверяем что он запущен
+    if ! docker inspect "$NGINX_CONTAINER" > /dev/null 2>&1; then
+        print_error "Docker контейнер '$NGINX_CONTAINER' не найден"
+        print_info "Запустите Remnawave: cd $REMNANODE_DIR && docker compose up -d"
+        exit 1
+    fi
+
+    if ! docker inspect --format='{{.State.Running}}' "$NGINX_CONTAINER" 2>/dev/null | grep -q "true"; then
+        print_error "Контейнер '$NGINX_CONTAINER' существует, но не запущен"
+        print_info "Запустите: cd $REMNANODE_DIR && docker compose up -d"
+        exit 1
+    fi
+
+    print_success "Remnawave обнаружена, контейнер $NGINX_CONTAINER запущен"
 }
 
 # Создание backup
@@ -189,39 +207,26 @@ obtain_ssl_certificate() {
     
     print_info "Получение SSL сертификата для $MTPROXY_DOMAIN"
     echo
-    print_warning "Для получения сертификата необходимо временно остановить контейнеры"
-    read -p "Продолжить? [Y/n]: " -n 1 -r
+    # Используем webroot — Nginx уже настроен с /.well-known/acme-challenge/
+    # и не требует остановки сервисов (в отличие от --standalone)
+    print_info "Используется метод webroot (/var/www/certbot) — сервисы не останавливаются"
     echo
-    
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
-        print_info "Получите сертификат вручную:"
-        echo "  sudo certbot certonly --standalone -d $MTPROXY_DOMAIN"
-        return 1
-    fi
-    
-    # Останавливаем контейнеры
-    print_info "Остановка контейнеров..."
-    
-    if [ -f "$REMNANODE_DIR/docker-compose.yml" ]; then
-        cd "$REMNANODE_DIR"
-        docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
-    fi
-    
-    if systemctl is-active --quiet mtproxy; then
-        systemctl stop mtproxy
-    fi
-    
-    # Получаем сертификат
-    print_info "Запуск certbot..."
-    
-    if certbot certonly --standalone --non-interactive --agree-tos \
+
+    # Получаем сертификат через webroot (Nginx обслуживает ACME-challenge)
+    if certbot certonly --webroot -w /var/www/certbot \
+        --non-interactive --agree-tos \
         --register-unsafely-without-email -d "$MTPROXY_DOMAIN"; then
         print_success "SSL сертификат успешно получен"
         return 0
     else
-        print_error "Ошибка получения сертификата"
-        print_info "Попробуйте вручную:"
-        echo "  sudo certbot certonly --standalone -d $MTPROXY_DOMAIN"
+        print_error "Ошибка получения сертификата через webroot"
+        print_info "Убедитесь что:"
+        echo "  1. Домен $MTPROXY_DOMAIN указывает на этот сервер"
+        echo "  2. Nginx запущен и обслуживает /.well-known/acme-challenge/"
+        echo "  3. Директория /var/www/certbot существует"
+        echo ""
+        print_info "Ручное получение:"
+        echo "  sudo certbot certonly --webroot -w /var/www/certbot -d $MTPROXY_DOMAIN"
         return 1
     fi
 }
@@ -232,75 +237,93 @@ obtain_ssl_certificate() {
 
 update_stream_conf() {
     print_header "Обновление stream.conf"
-    
+
     backup_file "$STREAM_CONF"
-    
+
+    # Relay-порт: Nginx-relay на localhost, снимающий proxy_protocol перед MTProxy.
+    # Используем ngx_stream_realip_module (set_real_ip_from) для consume PROXY-заголовка.
+    RELAY_PORT=$(( BACKEND_PORT + 1000 ))
+
     # Парсим существующую конфигурацию
     declare -A DOMAINS
-    
+    declare -A BACKEND_PORTS
+
     if [ -f "$STREAM_CONF" ]; then
         # Извлекаем существующие домены из map блока
         while IFS= read -r line; do
             if [[ $line =~ ^[[:space:]]*([a-zA-Z0-9\.\-]+)[[:space:]]+([a-zA-Z0-9_]+); ]]; then
                 domain="${BASH_REMATCH[1]}"
                 backend="${BASH_REMATCH[2]}"
-                
+
                 if [ "$domain" != "default" ]; then
                     DOMAINS["$domain"]="$backend"
                 fi
             fi
         done < <(sed -n '/^map.*$ssl_preread_server_name/,/^}/p' "$STREAM_CONF")
+
+        # Извлекаем порты существующих upstream
+        while IFS= read -r line; do
+            if [[ $line =~ upstream[[:space:]]+([a-zA-Z0-9_]+)[[:space:]]*\{ ]]; then
+                current_upstream="${BASH_REMATCH[1]}"
+            fi
+            if [[ $line =~ server[[:space:]]+127\.0\.0\.1:([0-9]+); ]] && [ -n "$current_upstream" ]; then
+                BACKEND_PORTS["$current_upstream"]="${BASH_REMATCH[1]}"
+                current_upstream=""
+            fi
+        done < "$STREAM_CONF"
     fi
-    
-    # Добавляем MTProxy домен
-    DOMAINS["$MTPROXY_DOMAIN"]="mtproxy_backend"
-    
+
+    # Добавляем MTProxy домен — направляем через relay (strips proxy_protocol)
+    DOMAINS["$MTPROXY_DOMAIN"]="mtproxy_relay"
+
     print_info "Найдено доменов: ${#DOMAINS[@]}"
-    
+
     # Создаем новый stream.conf
     {
         echo "map \$ssl_preread_server_name \$backend_name {"
-        
+
         for domain in "${!DOMAINS[@]}"; do
-            printf "    %-30s %s;\n" "$domain" "${DOMAINS[$domain]}"
+            printf "    %-35s %s;\n" "$domain" "${DOMAINS[$domain]}"
         done
-        
-        echo "    default                        nginx_backend;"
+
+        echo "    default                             nginx_backend;"
         echo "}"
         echo
-        
-        # Upstream блоки
+
+        # Upstream для HTTP-бэкенда (Remnawave/Nginx)
         echo "upstream nginx_backend {"
-        echo "    server 127.0.0.1:8443;"
+        echo "    server 127.0.0.1:${BACKEND_PORTS[nginx_backend]:-8443};"
         echo "}"
         echo
-        
-        echo "upstream mtproxy_backend {"
-        echo "    server 127.0.0.1:$BACKEND_PORT;"
+
+        # Upstream для MTProxy relay (промежуточный, снимает proxy_protocol)
+        echo "upstream mtproxy_relay {"
+        echo "    server 127.0.0.1:$RELAY_PORT;"
         echo "}"
         echo
-        
-        # Другие upstream если есть
+
+        # Другие upstream если есть (xray_reality и т.д.)
         for backend in $(printf '%s\n' "${DOMAINS[@]}" | sort -u); do
-            if [ "$backend" != "nginx_backend" ] && [ "$backend" != "mtproxy_backend" ]; then
-                # Определяем порт для известных backend
+            if [ "$backend" != "nginx_backend" ] && \
+               [ "$backend" != "mtproxy_relay" ] && \
+               [ "$backend" != "nginx_backend" ]; then
                 case "$backend" in
                     xray_reality)
-                        port="9443"
+                        port="${BACKEND_PORTS[$backend]:-9443}"
                         ;;
                     *)
                         continue
                         ;;
                 esac
-                
+
                 echo "upstream $backend {"
                 echo "    server 127.0.0.1:$port;"
                 echo "}"
                 echo
             fi
         done
-        
-        # Server блок
+
+        # Основной SNI-сервер (proxy_protocol on — для HTTP-бэкендов нужен реальный IP)
         echo "server {"
         echo "    listen 443 reuseport;"
         echo "    listen [::]:443 reuseport;"
@@ -309,82 +332,56 @@ update_stream_conf() {
         echo "    ssl_preread on;"
         echo "    proxy_protocol on;"
         echo "}"
-        
+        echo
+
+        # Relay-сервер для MTProxy:
+        # Nginx работает в Docker с network_mode: host, поэтому 127.0.0.1 общий
+        # между контейнером и хостом. MTProxy (systemd) слушает на 127.0.0.1:BACKEND_PORT.
+        #
+        # Поток данных:
+        #   client → 443 (main server, proxy_protocol on) → 127.0.0.1:RELAY_PORT
+        #   → set_real_ip_from: consume/strip PROXY-заголовок
+        #   → proxy_pass: чистый TLS-поток → MTProxy:BACKEND_PORT
+        #
+        # ngx_stream_realip_module включён в официальный образ nginx:1.29.1
+        echo "# MTProxy relay: strips PROXY protocol before forwarding to MTProxy"
+        echo "# nginx:1.29.1 includes ngx_stream_realip_module by default"
+        echo "server {"
+        echo "    listen 127.0.0.1:$RELAY_PORT;"
+        echo "    set_real_ip_from 127.0.0.1;"
+        echo "    proxy_pass 127.0.0.1:$BACKEND_PORT;"
+        echo "}"
+
     } > "$STREAM_CONF"
-    
+
     print_success "stream.conf обновлен"
+    print_info "MTProxy relay порт: $RELAY_PORT → MTProxy: $BACKEND_PORT"
+    print_info "Для работы relay необходим модуль ngx_stream_realip_module"
+    print_info "Установка: sudo apt install nginx-full (если не установлен)"
 }
 
 ################################################################################
-# Создание Nginx конфигурации для MTProxy
+# Проверка модуля ngx_stream_realip_module
 ################################################################################
 
-create_nginx_config() {
-    print_header "Создание Nginx конфигурации"
-    
-    mkdir -p "$SITES_AVAILABLE"
-    
-    NGINX_CONF="$SITES_AVAILABLE/$MTPROXY_DOMAIN"
-    backup_file "$NGINX_CONF"
-    
-    # Загружаем конфигурацию MTProxy
-    source "$MTPROXY_DIR/.env"
-    
-    cat > "$NGINX_CONF" << EOF
-server {
-    server_tokens off;
-    server_name $MTPROXY_DOMAIN;
-    listen $BACKEND_PORT ssl proxy_protocol;
-    listen [::]:$BACKEND_PORT ssl proxy_protocol;
-    http2 on;
-    
-    index index.html;
-    root /var/www/html/;
+check_nginx_realip_module() {
+    print_header "Проверка Nginx модулей"
 
-    real_ip_header proxy_protocol;
-    set_real_ip_from 127.0.0.1;
-
-    # SSL Configuration
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384:DHE-RSA-CHACHA20-POLY1305;
-    ssl_prefer_server_ciphers off;
-    ssl_certificate /etc/letsencrypt/live/$MTPROXY_DOMAIN/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/$MTPROXY_DOMAIN/privkey.pem;
-
-    # Proxy to MTProxy (official implementation uses raw TCP, not HTTP)
-    # This location serves as a dummy for SSL handshake
-    location / {
-        # MTProxy works at transport level, not HTTP
-        # This section handles HTTP requests if any
-        return 200 'MTProxy Server';
-        add_header Content-Type text/plain;
-    }
-
-    # Security
-    set \$safe "";
-    if (\$host !~* ^(.+\\.)?${MTPROXY_DOMAIN//./\\.}\$ ) {return 444;}
-    if (\$scheme ~* https) {set \$safe 1;}
-    if (\$ssl_server_name !~* ^(.+\\.)?${MTPROXY_DOMAIN//./\\.}\$ ) {set \$safe "\${safe}0"; }
-    if (\$safe = 10) {return 444;}
-    
-    error_page 400 401 402 403 500 501 502 503 504 =404 /404;
-    proxy_intercept_errors on;
-
-    # Timeouts
-    http2_max_concurrent_streams 1024;
-    keepalive_timeout            60s;
-    keepalive_requests           2048;
-    client_body_timeout          600s;
-    client_header_timeout        300s;
-
-    sendfile              on;
-    tcp_nodelay           on;
-    tcp_nopush            on;
-    client_max_body_size  10m;
-}
-EOF
-    
-    print_success "Nginx конфигурация создана: $NGINX_CONF"
+    # Проверяем внутри Docker контейнера (nginx:1.29.1 включает stream_realip по умолчанию)
+    if docker exec "$NGINX_CONTAINER" nginx -V 2>&1 | grep -q "stream_realip"; then
+        print_success "ngx_stream_realip_module доступен в контейнере $NGINX_CONTAINER"
+    else
+        print_warning "ngx_stream_realip_module НЕ обнаружен в контейнере $NGINX_CONTAINER!"
+        print_info "Официальный образ nginx:1.29.1 включает этот модуль — возможно используется другой образ"
+        print_info "Проверьте: docker exec $NGINX_CONTAINER nginx -V 2>&1 | grep stream"
+        echo
+        read -p "Продолжить без проверки модуля? [y/N]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+        print_warning "Продолжаем — убедитесь что модуль доступен"
+    fi
 }
 
 ################################################################################
@@ -445,20 +442,48 @@ update_80_conf() {
 
 update_mtproxy_config() {
     print_header "Обновление конфигурации MTProxy"
-    
+
     # Обновляем .env с доменом и NAT info
     if ! grep -q "^DOMAIN_NAME=" "$MTPROXY_DIR/.env"; then
         echo "DOMAIN_NAME=$MTPROXY_DOMAIN" >> "$MTPROXY_DIR/.env"
     else
         sed -i "s/^DOMAIN_NAME=.*/DOMAIN_NAME=$MTPROXY_DOMAIN/" "$MTPROXY_DIR/.env"
     fi
-    
+
     if ! grep -q "^USE_DOMAIN=" "$MTPROXY_DIR/.env"; then
         echo "USE_DOMAIN=yes" >> "$MTPROXY_DIR/.env"
     else
         sed -i "s/^USE_DOMAIN=.*/USE_DOMAIN=yes/" "$MTPROXY_DIR/.env"
     fi
-    
+
+    # Обновляем systemd сервис:
+    # 1. Добавляем -D $DOMAIN для TLS-режима (fakeTLS) — обязательно для SNI-роутинга
+    # 2. Исправляем -S: должен быть SECRET (32 hex), не DISPLAY_SECRET (с dd/ee префиксом)
+    SERVICE_FILE="/etc/systemd/system/mtproxy.service"
+    if [ -f "$SERVICE_FILE" ]; then
+        source "$MTPROXY_DIR/.env"
+
+        # Исправляем -S если используется DISPLAY_SECRET с dd-префиксом (34 символа вместо 32)
+        if grep -q "\-S dd$SECRET\b\|\-S ee$SECRET\b" "$SERVICE_FILE" 2>/dev/null; then
+            sed -i "s|-S dd${SECRET}|-S ${SECRET}|g; s|-S ee${SECRET}|-S ${SECRET}|g" "$SERVICE_FILE"
+            print_success "Исправлен -S: убран dd/ee-префикс (сервер требует ровно 32 hex)"
+        fi
+
+        # Добавляем -D DOMAIN если ещё нет
+        if ! grep -q "\-D $MTPROXY_DOMAIN" "$SERVICE_FILE"; then
+            sed -i "s|--aes-pwd|-D $MTPROXY_DOMAIN --aes-pwd|" "$SERVICE_FILE"
+            print_success "Добавлен -D $MTPROXY_DOMAIN (TLS-режим/fakeTLS)"
+        else
+            print_info "-D $MTPROXY_DOMAIN уже присутствует в сервисе"
+        fi
+
+        systemctl daemon-reload
+        print_success "Systemd сервис обновлен"
+    else
+        print_warning "Файл сервиса не найден: $SERVICE_FILE"
+        print_info "Убедитесь что MTProxy установлен через install_official.sh"
+    fi
+
     print_success "Конфигурация MTProxy обновлена"
 }
 
@@ -468,32 +493,45 @@ update_mtproxy_config() {
 
 restart_services() {
     print_header "Перезапуск сервисов"
-    
-    # Запускаем Remnawave
-    print_info "Запуск Remnawave..."
-    cd "$REMNANODE_DIR"
-    
-    if command -v docker-compose &> /dev/null; then
-        docker-compose down 2>/dev/null || true
-        docker-compose up -d
+
+    # Nginx работает в Docker контейнере (network_mode: host).
+    # Используем docker exec для управления — НЕ docker compose restart
+    # (restart прерывает все соединения, reload — мягкий, без разрыва)
+
+    # Шаг 1: Валидация конфигурации внутри контейнера
+    print_info "Проверка конфигурации Nginx в контейнере $NGINX_CONTAINER..."
+    if docker exec "$NGINX_CONTAINER" nginx -t 2>/dev/null; then
+        print_success "Конфигурация Nginx валидна"
     else
-        docker compose down 2>/dev/null || true
-        docker compose up -d
+        print_error "Ошибка в конфигурации Nginx!"
+        print_info "Детали: docker exec $NGINX_CONTAINER nginx -t"
+        print_info "Backup конфигурации: $STREAM_CONF.backup.*"
+        return 1
     fi
-    
-    print_success "Remnawave запущена"
-    
-    # Запускаем MTProxy
-    print_info "Запуск MTProxy..."
-    
+
+    # Шаг 2: Мягкий reload Nginx (без разрыва соединений)
+    print_info "Перезагрузка Nginx в контейнере $NGINX_CONTAINER..."
+    if docker exec "$NGINX_CONTAINER" nginx -s reload; then
+        print_success "Nginx успешно перезагружен (graceful reload)"
+    else
+        print_error "Ошибка перезагрузки Nginx"
+        print_info "Попытка через docker compose restart..."
+        cd "$REMNANODE_DIR"
+        docker compose restart remnawave-nginx 2>/dev/null || \
+            docker-compose restart remnawave-nginx 2>/dev/null || true
+    fi
+
+    # Шаг 3: Запускаем/перезапускаем MTProxy (системный сервис на хосте)
+    print_info "Запуск MTProxy (systemd)..."
+
     if systemctl is-active --quiet mtproxy; then
         systemctl restart mtproxy
     else
         systemctl start mtproxy
     fi
-    
+
     sleep 3
-    
+
     if systemctl is-active --quiet mtproxy; then
         print_success "MTProxy запущен"
     else
@@ -501,16 +539,24 @@ restart_services() {
         print_info "Логи: journalctl -u mtproxy -n 50"
         return 1
     fi
-    
-    # Проверяем порты
+
+    # Шаг 4: Проверяем порты (network_mode: host — все порты видны с хоста)
     print_info "Проверка портов..."
-    
-    if netstat -tuln 2>/dev/null | grep -q ":443 "; then
-        print_success "Порт 443 открыт (Nginx)"
+
+    if ss -tuln 2>/dev/null | grep -q ":443 " || \
+       netstat -tuln 2>/dev/null | grep -q ":443 "; then
+        print_success "Порт 443 открыт (Nginx SNI)"
     fi
-    
-    if netstat -tuln 2>/dev/null | grep -q "127.0.0.1:$BACKEND_PORT "; then
-        print_success "Backend порт $BACKEND_PORT открыт"
+
+    RELAY_PORT=$(( BACKEND_PORT + 1000 ))
+    if ss -tuln 2>/dev/null | grep -q "127.0.0.1:$RELAY_PORT" || \
+       netstat -tuln 2>/dev/null | grep -q "127.0.0.1:$RELAY_PORT"; then
+        print_success "Relay порт $RELAY_PORT открыт (nginx → MTProxy)"
+    fi
+
+    if ss -tuln 2>/dev/null | grep -q "127.0.0.1:$BACKEND_PORT" || \
+       netstat -tuln 2>/dev/null | grep -q "127.0.0.1:$BACKEND_PORT"; then
+        print_success "MTProxy backend порт $BACKEND_PORT открыт"
     fi
 }
 
@@ -520,12 +566,17 @@ restart_services() {
 
 print_final_info() {
     print_header "ИНТЕГРАЦИЯ ЗАВЕРШЕНА"
-    
+
     source "$MTPROXY_DIR/.env"
-    
-    # Формируем ссылку
-    PROXY_LINK="tg://proxy?server=$MTPROXY_DOMAIN&port=443&secret=$DISPLAY_SECRET"
-    
+
+    RELAY_PORT=$(( BACKEND_PORT + 1000 ))
+
+    # Для TLS-режима (fakeTLS) клиентский секрет должен иметь префикс 'ee'
+    # Сервер использует -S $SECRET (32 hex) и -D $DOMAIN
+    # Клиент использует secret=ee$SECRET в ссылке tg://proxy
+    EE_SECRET="ee${SECRET}"
+    PROXY_LINK="tg://proxy?server=$MTPROXY_DOMAIN&port=443&secret=$EE_SECRET"
+
     echo
     echo "═══════════════════════════════════════════════════════════"
     echo -e "${GREEN}✓ MTProxy успешно интегрирован с Remnawave!${NC}"
@@ -534,8 +585,10 @@ print_final_info() {
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
     echo "   Домен:          $MTPROXY_DOMAIN"
     echo "   Внешний порт:   443 (Nginx SNI)"
-    echo "   Backend порт:   $BACKEND_PORT"
-    echo "   Секрет:         $DISPLAY_SECRET"
+    echo "   Relay порт:     $RELAY_PORT (nginx relay, снимает proxy_protocol)"
+    echo "   MTProxy порт:   $BACKEND_PORT (внутренний)"
+    echo "   Секрет сервера: $SECRET (32 hex, используется с -S и -D)"
+    echo "   Секрет клиента: $EE_SECRET (ee-префикс = TLS/fakeTLS режим)"
     echo
     echo -e "${CYAN}🔗 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ:${NC}"
     echo "═══════════════════════════════════════════════════════════"
@@ -543,45 +596,65 @@ print_final_info() {
     echo "═══════════════════════════════════════════════════════════"
     echo
     echo -e "${CYAN}🏗 АРХИТЕКТУРА:${NC}"
-    echo "   Internet:443 → Nginx SNI → Backend:$BACKEND_PORT → MTProxy"
+    echo "   Internet:443"
+    echo "   → Nginx Docker (network_mode:host, ssl_preread, proxy_protocol on)"
+    echo "   │    ru3-x.vline.online → nginx_backend:8443  (proxy_protocol ✓)"
+    echo "   │    $MTPROXY_DOMAIN → mtproxy_relay:$RELAY_PORT"
+    echo "   → Relay:$RELAY_PORT (set_real_ip_from strips PROXY header)"
+    echo "   → MTProxy:$BACKEND_PORT (systemd на хосте, -D $MTPROXY_DOMAIN)"
     echo
     echo -e "${CYAN}📁 ФАЙЛЫ КОНФИГУРАЦИИ:${NC}"
     echo "   Stream:   $STREAM_CONF"
-    echo "   Nginx:    $SITES_AVAILABLE/$MTPROXY_DOMAIN"
     echo "   HTTP:     $SITES_AVAILABLE/80.conf"
     echo "   MTProxy:  $MTPROXY_DIR/.env"
+    echo "   Service:  /etc/systemd/system/mtproxy.service"
     echo
     echo -e "${CYAN}🛠 УПРАВЛЕНИЕ:${NC}"
-    echo "   MTProxy:    bash manage_mtproxy_official.sh"
-    echo "   Remnawave:  cd $REMNANODE_DIR && docker compose"
+    echo "   MTProxy:         bash manage_mtproxy_official.sh"
+    echo "   Nginx проверка:  docker exec $NGINX_CONTAINER nginx -t"
+    echo "   Nginx reload:    docker exec $NGINX_CONTAINER nginx -s reload"
+    echo "   Nginx логи:      docker logs $NGINX_CONTAINER -f"
     echo
-    
+
     # Сохраняем информацию
     cat > "$MTPROXY_DIR/remnawave_integration.txt" << EOF
 MTProxy + Remnawave Integration
 ═══════════════════════════════════════════════════════════
 
 Domain:         $MTPROXY_DOMAIN
-External Port:  443 (Nginx SNI)
-Backend Port:   $BACKEND_PORT
-Secret:         $DISPLAY_SECRET
+External Port:  443 (Nginx Docker, network_mode:host)
+Relay Port:     $RELAY_PORT (strips proxy_protocol for MTProxy)
+MTProxy Port:   $BACKEND_PORT (systemd on host)
+Server Secret:  $SECRET  (32 hex, for -S flag)
+Client Secret:  $EE_SECRET (ee-prefix = TLS/fakeTLS mode)
+Nginx Container: $NGINX_CONTAINER
 
 Connection Link:
 $PROXY_LINK
 
 Architecture:
-Internet:443 → Nginx SNI → Backend:$BACKEND_PORT → MTProxy
+Internet:443
+→ Nginx Docker (network_mode:host, ssl_preread, proxy_protocol on)
+│    ru3-x.vline.online → nginx_backend:8443  (proxy_protocol required ✓)
+│    $MTPROXY_DOMAIN → mtproxy_relay:$RELAY_PORT
+→ Relay:$RELAY_PORT (set_real_ip_from strips PROXY header)
+→ MTProxy:$BACKEND_PORT systemd (-D $MTPROXY_DOMAIN, fakeTLS)
+
+Management:
+  docker exec $NGINX_CONTAINER nginx -t          # validate config
+  docker exec $NGINX_CONTAINER nginx -s reload   # graceful reload
+  bash manage_mtproxy_official.sh                # MTProxy management
 
 Configuration Files:
 - Stream:  $STREAM_CONF
-- Nginx:   $SITES_AVAILABLE/$MTPROXY_DOMAIN
 - HTTP:    $SITES_AVAILABLE/80.conf
 - MTProxy: $MTPROXY_DIR/.env
+- Service: /etc/systemd/system/mtproxy.service
 
 ═══════════════════════════════════════════════════════════
 Generated: $(date)
 EOF
-    
+
     print_success "Информация сохранена: $MTPROXY_DIR/remnawave_integration.txt"
     echo
 }
@@ -601,12 +674,12 @@ main() {
     check_root
     check_mtproxy
     check_remnawave
-    
+    check_nginx_realip_module
+
     # Установка
     interactive_setup
     obtain_ssl_certificate
     update_stream_conf
-    create_nginx_config
     update_80_conf
     update_mtproxy_config
     restart_services

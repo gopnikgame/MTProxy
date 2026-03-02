@@ -94,8 +94,8 @@ tg://proxy?server=proxy.example.com&port=443&secret=ee<32hex>
 ```
 Internet :443
 └─► Nginx Docker  (network_mode: host, ssl_preread SNI, proxy_protocol ON)
-     ├─► ru3-x.vline.online ──► nginx_backend:8443   (proxy_protocol ✓)
-     ├─► ru3.vline.online   ──► xray_reality:9443    (proxy_protocol ✓)
+     ├─► excample.com ──► nginx_backend:8443   (proxy_protocol ✓)
+     ├─► s1.excample.com   ──► xray_reality:9443    (proxy_protocol ✓)
      └─► proxy.example.com ──► mtproxy_relay:11443
                                        │
                           set_real_ip_from (strips PROXY header)

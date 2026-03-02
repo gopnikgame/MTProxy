@@ -369,16 +369,27 @@ interactive_configuration() {
     
     # Random Padding
     echo
-    read -p "Включить Random Padding (защита от DPI)? [Y/n]: " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        USE_DD_PREFIX="yes"
-        DISPLAY_SECRET="dd$SECRET"
-        print_success "Random Padding включен"
-        print_info "Секрет с префиксом: dd$SECRET"
-    else
+    if [ "$NGINX_MODE" = "yes" ]; then
+        # В fakeTLS-режиме (-D domain) клиентский секрет получает префикс 'ee'.
+        # Префикс 'dd' (Random Padding) несовместим с 'ee': сервер с -D ожидает
+        # TLS-хэндшейк, а dd-клиент шлёт MTProto+padding → соединение не установится.
+        # FakeTLS уже обеспечивает маскировку сильнее, чем Random Padding.
         USE_DD_PREFIX="no"
         DISPLAY_SECRET="$SECRET"
+        print_info "Random Padding отключён (несовместим с fakeTLS/Nginx-режимом)"
+        print_info "Защита от DPI обеспечивается через TLS-маскировку (-D domain)"
+    else
+        read -p "Включить Random Padding (защита от DPI)? [Y/n]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            USE_DD_PREFIX="yes"
+            DISPLAY_SECRET="dd$SECRET"
+            print_success "Random Padding включён"
+            print_info "Секрет с префиксом: dd$SECRET"
+        else
+            USE_DD_PREFIX="no"
+            DISPLAY_SECRET="$SECRET"
+        fi
     fi
     
     # Порты

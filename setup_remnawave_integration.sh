@@ -126,6 +126,7 @@ interactive_setup() {
     
     echo "Текущие настройки MTProxy:"
     echo "  Внешний порт: $EXTERNAL_PORT"
+    [ -n "$DOMAIN_NAME" ] && echo "  Домен:        $DOMAIN_NAME"
     echo
     
     # Спрашиваем домен
@@ -133,18 +134,33 @@ interactive_setup() {
     echo -e "${CYAN}1. ДОМЕННОЕ ИМЯ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
-    echo "Введите домен для MTProxy (например: proxy.example.com)"
-    
+    if [ -n "$DOMAIN_NAME" ]; then
+        print_info "Из конфигурации MTProxy: $DOMAIN_NAME (Enter для подтверждения)"
+    else
+        echo "Введите домен для MTProxy (например: proxy.example.com)"
+    fi
+
     while true; do
-        read -p "Домен: " MTPROXY_DOMAIN
-        
+        if [ -n "$DOMAIN_NAME" ]; then
+            read -p "Домен [${DOMAIN_NAME}]: " MTPROXY_DOMAIN
+            MTPROXY_DOMAIN="${MTPROXY_DOMAIN:-$DOMAIN_NAME}"
+        else
+            read -p "Домен: " MTPROXY_DOMAIN
+        fi
+
         # Проверка формата домена
         if [[ ! "$MTPROXY_DOMAIN" =~ ^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$ ]]; then
             print_error "Некорректный формат домена"
             continue
         fi
-        
-        # Проверка DNS
+
+        # Если домен совпадает с уже настроенным — DNS уже проверялся при установке
+        if [ "$MTPROXY_DOMAIN" = "$DOMAIN_NAME" ]; then
+            print_success "Домен подтверждён: $MTPROXY_DOMAIN"
+            break
+        fi
+
+        # Новый домен — проверяем DNS
         if host "$MTPROXY_DOMAIN" > /dev/null 2>&1; then
             DOMAIN_IP=$(host "$MTPROXY_DOMAIN" | grep "has address" | awk '{print $4}' | head -n1)
             print_success "Домен $MTPROXY_DOMAIN указывает на $DOMAIN_IP"

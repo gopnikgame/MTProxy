@@ -560,6 +560,9 @@ restart_services() {
     # Шаг 3: Запускаем/перезапускаем MTProxy (системный сервис на хосте)
     print_info "Запуск MTProxy (systemd)..."
 
+    # MTProxy C-код требует PID < 65536 (assert в common/pid.c)
+    sysctl -w kernel.pid_max=65535 >/dev/null 2>&1 || true
+
     if systemctl is-active --quiet mtproxy; then
         systemctl restart mtproxy
     else

@@ -598,7 +598,16 @@ create_systemd_service() {
 
     # ВАЖНО: --aes-pwd и конфиг должны быть В КОНЦЕ и именно в таком порядке!
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
-    
+
+    # MTProxy (C) имеет жёсткое ограничение в исходном коде:
+    # common/pid.c: assert(!(p & 0xffff0000)) — PID процесса должен быть < 65536.
+    # На модерных Linux серверах PID может превысить 65535, что приводит к крашу.
+    # Решение: установить kernel.pid_max=65535.
+    print_info "Применение воркараунда PID: kernel.pid_max=65535..."
+    sysctl -w kernel.pid_max=65535
+    echo "kernel.pid_max = 65535" > /etc/sysctl.d/99-mtproxy-pid.conf
+    print_success "kernel.pid_max=65535 установлен (воркараунд MTProxy C-сервера)"
+
     # Создаем service файл
     cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF
 [Unit]
@@ -609,6 +618,8 @@ Documentation=https://github.com/TelegramMessenger/MTProxy
 [Service]
 Type=simple
 WorkingDirectory=/opt/MTProxy/run
+# MTProxy C-код требует PID < 65536 (assert в common/pid.c)
+ExecStartPre=/sbin/sysctl -w kernel.pid_max=65535
 ExecStartPre=/bin/bash -c 'curl -s https://core.telegram.org/getProxySecret -o /opt/MTProxy/run/proxy-secret'
 ExecStartPre=/bin/bash -c 'curl -s https://core.telegram.org/getProxyConfig -o /opt/MTProxy/run/proxy-multi.conf'
 ExecStart=$CMD

@@ -312,7 +312,39 @@ interactive_configuration() {
         source "$INSTALL_DIR/.env"
         print_info "Загружена существующая конфигурация"
     fi
-    
+
+    # Выбор режима работы
+    echo
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "${CYAN}РЕЖИМ РАБОТЫ${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    echo -e "  ${GREEN}1) Через Nginx / Remnawave СНИ (рекомендуется)${NC}"
+    echo    "     Internet:443 → Nginx → relay → MTProxy:backend"
+    echo    "     ✓ Порт 443 общий с XRay Reality, панелью и др."
+    echo    "     ✓ TLS/fakeTLS маскировка (флаг -D domain)"
+    echo    "     ✓ Требует: домен + Remnawave + setup_remnawave_integration.sh"
+    echo
+    echo -e "  ${YELLOW}2) Прямое подключение (без Nginx)${NC}"
+    echo    "     Internet:PORT → MTProxy напрямую"
+    echo    "     ✓ Проще в настройке, не зависит от Remnawave"
+    echo    "     ✓ Домен опционален (для TLS маскировки)"
+    echo
+    if [ "${NGINX_MODE:-yes}" = "yes" ]; then
+        DEFAULT_MODE_HINT="1"
+    else
+        DEFAULT_MODE_HINT="2"
+    fi
+    read -p "Выберите режим [1/2, по умолчанию $DEFAULT_MODE_HINT]: " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^2$ ]]; then
+        NGINX_MODE="no"
+        print_info "Режим: прямое подключение"
+    else
+        NGINX_MODE="yes"
+        print_info "Режим: через Nginx (Remnawave SNI)"
+    fi
+
     # Секрет пользователя
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -355,10 +387,23 @@ interactive_configuration() {
     echo -e "${CYAN}2. НАСТРОЙКА ПОРТОВ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
-    echo "Порт для клиентов (внешний): используется клиентами Telegram"
-    read -p "Внешний порт [${EXTERNAL_PORT:-443}]: " input
-    EXTERNAL_PORT=${input:-${EXTERNAL_PORT:-443}}
-    
+    if [ "$NGINX_MODE" = "yes" ]; then
+        echo -e "  ${GREEN}► Через Nginx: укажите BACKEND-порт MTProxy (не 443!)${NC}"
+        echo    "  схема: Internet:443 → Nginx:443 → relay:RELAY → MTProxy:BACKEND"
+        echo    "  Порт 443 занят Nginx. Клиентская ссылка всегда будет использовать порт 443."
+        echo -e "  ${YELLOW}Рекомендуется: 10443 или любой свободный порт${NC}"
+        DEFAULT_EXT_PORT="${EXTERNAL_PORT:-10443}"
+    else
+        echo -e "  ${YELLOW}► Прямое подключение: порт, на который подключаются клиенты${NC}"
+        echo    "  схема: Internet:PORT → MTProxy:PORT напрямую"
+        echo    "  Порт должен быть открыт в firewall: sudo ufw allow PORT/tcp"
+        echo -e "  ${YELLOW}Рекомендуется: 443 (стандартный HTTPS, меньше блокировок)${NC}"
+        DEFAULT_EXT_PORT="${EXTERNAL_PORT:-443}"
+    fi
+    echo
+    read -p "Порт MTProxy [${DEFAULT_EXT_PORT}]: " input
+    EXTERNAL_PORT=${input:-${DEFAULT_EXT_PORT}}
+
     echo
     echo "Порт статистики (локальный): доступен только через 127.0.0.1"
     read -p "Порт статистики [${STATS_PORT:-8888}]: " input
@@ -414,27 +459,58 @@ interactive_configuration() {
     
     # Домен (для TLS)
     echo
-    read -p "Использовать доменное имя вместо IP? [y/N]: " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        USE_DOMAIN="yes"
-        read -p "Доменное имя: " DOMAIN_NAME
-        
-        # Проверка DNS
-        if host "$DOMAIN_NAME" > /dev/null 2>&1; then
-            DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
-            print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
+    if [ "$NGINX_MODE" = "yes" ]; then
+        echo -e "  ${GREEN}► Через Nginx: домен ОБЯЗАТЕЛЕН${NC}"
+        echo    "  MTProxy работает в TLS/fakeTLS режиме (флаг -D domain)."
+        echo    "  Nginx роутит трафик по SNI на основе этого домена."
+        echo    "  Используйте OTДЕЛЬНЫЙ домен (не тот что у Remnawave/XRay)."
+        echo -e "  ${YELLOW}Домен должен указывать A-записью на этот сервер.${NC}"
+        echo -e "  ${YELLOW}Пример: proxy.example.com, mt.example.com${NC}"
+        echo
+        read -p "Домен MTProxy: " DOMAIN_NAME
+        if [ -n "$DOMAIN_NAME" ]; then
+            USE_DOMAIN="yes"
+            if host "$DOMAIN_NAME" > /dev/null 2>&1; then
+                DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
+                print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
+            else
+                print_warning "Не удалось разрешить домен $DOMAIN_NAME"
+                print_info "Убедитесь что A-запись добавлена перед запуском"
+            fi
         else
-            print_warning "Не удалось разрешить домен $DOMAIN_NAME"
+            print_warning "Домен не указан! Nginx SNI не будет работать без домена."
+            USE_DOMAIN="no"
         fi
     else
-        USE_DOMAIN="no"
+        echo -e "  ${YELLOW}► Прямое подключение: домен опционален${NC}"
+        echo    "  Без домена: подключение по IP-адресу:"
+        echo -e "  ${CYAN}  tg://proxy?server=${DETECTED_IP:-IP}&port=$EXTERNAL_PORT&secret=<hex>${NC}"
+        echo    "  С доменом: TLS/fakeTLS маскировка, лучше обходит блокировки:"
+        echo -e "  ${CYAN}  tg://proxy?server=domain&port=$EXTERNAL_PORT&secret=ee<hex>${NC}"
+        echo
+        read -p "Использовать доменное имя? [y/N]: " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            USE_DOMAIN="yes"
+            read -p "Доменное имя: " DOMAIN_NAME
+            if host "$DOMAIN_NAME" > /dev/null 2>&1; then
+                DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
+                print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
+            else
+                print_warning "Не удалось разрешить домен $DOMAIN_NAME"
+            fi
+        else
+            USE_DOMAIN="no"
+        fi
     fi
     
     # Сохраняем конфигурацию
     cat > "$INSTALL_DIR/.env" << EOF
 # MTProxy Configuration
 # Generated: $(date)
+
+# Mode
+NGINX_MODE=$NGINX_MODE
 
 # User Secret
 SECRET=$SECRET

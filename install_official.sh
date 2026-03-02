@@ -704,12 +704,13 @@ setup_management_scripts() {
         fi
     done
 
-    # Создаём симлинк /usr/local/bin/mtproxy → manage_mtproxy_official.sh
-    # Позволяет запускать управление командой: mtproxy
+    # Создаём симлинки /usr/local/bin/mtproxy и /usr/local/bin/MTProxy
+    # Позволяет запускать управление командами: mtproxy  и  MTProxy
     if [ -f "$INSTALL_DIR/manage_mtproxy_official.sh" ]; then
         ln -sf "$INSTALL_DIR/manage_mtproxy_official.sh" /usr/local/bin/mtproxy
-        print_success "Симлинк создан: /usr/local/bin/mtproxy"
-        print_info "Управление MTProxy доступно командой: mtproxy"
+        ln -sf "$INSTALL_DIR/manage_mtproxy_official.sh" /usr/local/bin/MTProxy
+        print_success "Симлинки созданы: mtproxy  и  MTProxy → $INSTALL_DIR/manage_mtproxy_official.sh"
+        print_info "Управление MTProxy доступно командами: mtproxy  или  MTProxy"
     fi
 }
 

@@ -206,11 +206,15 @@ obtain_ssl_certificate() {
         EXPIRY=$(openssl x509 -enddate -noout -in "$CERT_PATH" | cut -d= -f2)
         print_info "Срок действия: $EXPIRY"
         
-        read -p "Получить новый сертификат? [y/N]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            return 0
-        fi
+        while true; do
+            read -p "Получить новый сертификат? [y/N]: " -n 1 -r
+            echo
+            case "$REPLY" in
+                Y|y) break ;;
+                N|n|"") return 0 ;;
+                *) print_warning "Неверный ввод. Нажмите Y (да) или N (нет)" ;;
+            esac
+        done
     fi
     
     print_info "Получение SSL сертификата для $MTPROXY_DOMAIN"
@@ -387,11 +391,15 @@ check_nginx_realip_module() {
         print_info "Официальный образ nginx:1.29.1 включает этот модуль — возможно используется другой образ"
         print_info "Проверьте: docker exec $NGINX_CONTAINER nginx -V 2>&1 | grep stream"
         echo
-        read -p "Продолжить без проверки модуля? [y/N]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            exit 1
-        fi
+        while true; do
+            read -p "Продолжить без проверки модуля? [y/N]: " -n 1 -r
+            echo
+            case "$REPLY" in
+                Y|y) break ;;
+                N|n|"") exit 1 ;;
+                *) print_warning "Неверный ввод. Нажмите Y (да) или N (нет)" ;;
+            esac
+        done
         print_warning "Продолжаем — убедитесь что модуль доступен"
     fi
 }
@@ -408,10 +416,10 @@ update_80_conf() {
     
     # Извлекаем существующие домены
     EXISTING_DOMAINS=()
-    
+    local _sn_re='server_name[[:space:]]+(.+);'
     if [ -f "$CONF_80" ]; then
         while IFS= read -r line; do
-            if [[ $line =~ server_name[[:space:]]+(.+); ]]; then
+            if [[ $line =~ $_sn_re ]]; then
                 domains_str="${BASH_REMATCH[1]}"
                 IFS=' ' read -ra domains <<< "$domains_str"
                 EXISTING_DOMAINS+=("${domains[@]}")

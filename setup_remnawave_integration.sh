@@ -191,8 +191,23 @@ interactive_setup() {
     echo
     # Используем значение из .env если уже есть
     EXISTING_TLS_DOMAIN=$(grep '^TLS_DOMAIN=' "$MTPROXY_DIR/.env" 2>/dev/null | cut -d= -f2)
-    read -p "Домен маскировки [${EXISTING_TLS_DOMAIN:-www.google.com}]: " TLS_DOMAIN
-    TLS_DOMAIN=${TLS_DOMAIN:-${EXISTING_TLS_DOMAIN:-www.google.com}}
+    # Сбрасываем, если предыдущий TLS_DOMAIN совпадал с сервисным доменом (circular bug)
+    if [ "$EXISTING_TLS_DOMAIN" = "$MTPROXY_DOMAIN" ]; then
+        EXISTING_TLS_DOMAIN="www.google.com"
+        print_warning "Предыдущий TLS_DOMAIN совпадал с сервисным доменом — сброшен до www.google.com"
+    fi
+    while true; do
+        read -p "Домен маскировки [${EXISTING_TLS_DOMAIN:-www.google.com}]: " TLS_DOMAIN
+        TLS_DOMAIN=${TLS_DOMAIN:-${EXISTING_TLS_DOMAIN:-www.google.com}}
+        if [ "$TLS_DOMAIN" = "$MTPROXY_DOMAIN" ]; then
+            print_error "Домен маскировки НЕ может совпадать с сервисным доменом $MTPROXY_DOMAIN!"
+            print_info "MTProxy попытается подключиться к себе через Nginx → циклическое соединение"
+            print_info "Используйте внешний сайт: www.google.com, telegram.org, cloudflare.com"
+            EXISTING_TLS_DOMAIN="www.google.com"
+            continue
+        fi
+        break
+    done
     print_success "Домен маскировки: $TLS_DOMAIN"
 
     # Backend порт для Nginx
@@ -533,7 +548,13 @@ update_mtproxy_config() {
         # Устанавливаем -D TLS_DOMAIN (домен маскировки, НЕ сервисный домен).
         # TLS_DOMAIN — внешний сайт, MTProxy соединяется с ним для получения TLS fingerprint.
         # Это предотвращает циклическое подключение MTProxy к самому себе через Nginx.
-        EFFECTIVE_TLS="${TLS_DOMAIN:-$MTPROXY_DOMAIN}"
+        if [ -z "$TLS_DOMAIN" ] || [ "$TLS_DOMAIN" = "$MTPROXY_DOMAIN" ]; then
+            print_error "TLS_DOMAIN ('${TLS_DOMAIN:-пусто}') не задан или совпадает с сервисным доменом!"
+            print_info "MTProxy с -D <свой домен> → исходящее соединение через Nginx → циклический зависон"
+            print_info "Исправьте TLS_DOMAIN в $MTPROXY_DIR/.env (например: TLS_DOMAIN=www.google.com)"
+            return 1
+        fi
+        EFFECTIVE_TLS="$TLS_DOMAIN"
         # Удаляем старый -D если есть (может указывать на неверный домен)
         sed -i 's| -D [^ ]*||g' "$SERVICE_FILE"
         sed -i "s|--aes-pwd|-D $EFFECTIVE_TLS --aes-pwd|" "$SERVICE_FILE"

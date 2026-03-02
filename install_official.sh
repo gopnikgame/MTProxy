@@ -592,6 +592,12 @@ create_systemd_service() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
+    # В режиме Nginx/relay: MTProxy должен слушать только на 127.0.0.1.
+    # Relay (Nginx stream) подключается с 127.0.0.1; прямой доступ из интернета должен быть исключён.
+    if [ "$NGINX_MODE" = "yes" ]; then
+        CMD="$CMD --address 127.0.0.1"
+    fi
+
     # Добавляем AD Tag если указан
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"

@@ -360,14 +360,21 @@ change_secret() {
     esac
     
     echo
-    read -p "Включить Random Padding (dd префикс)? [Y/n]: " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
-        DISPLAY_SECRET="dd$NEW_SECRET"
-        USE_DD_PREFIX="yes"
-    else
+    if [ "${NGINX_MODE:-no}" = "yes" ]; then
+        # fakeTLS режим (-D domain): dd-префикс несовместим с TLS-хэндшейком
         DISPLAY_SECRET="$NEW_SECRET"
         USE_DD_PREFIX="no"
+        print_info "Random Padding отключён (несовместим с fakeTLS/Nginx-режимом)"
+    else
+        read -p "Включить Random Padding (dd префикс)? [Y/n]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+            DISPLAY_SECRET="dd$NEW_SECRET"
+            USE_DD_PREFIX="yes"
+        else
+            DISPLAY_SECRET="$NEW_SECRET"
+            USE_DD_PREFIX="no"
+        fi
     fi
     
     # Обновляем конфигурацию
@@ -394,6 +401,10 @@ change_secret() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
+    if [ "${NGINX_MODE:-no}" = "yes" ]; then
+        CMD="$CMD --address 127.0.0.1"
+    fi
+
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
@@ -413,11 +424,11 @@ change_secret() {
 
     # Обновляем service файл
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
-    
+
     systemctl daemon-reload
-    
+
     restart_service
-    
+
     echo
     show_connection_info
 }
@@ -474,6 +485,10 @@ change_ad_tag() {
     CMD="$CMD -H $EXTERNAL_PORT"
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
+
+    if [ "${NGINX_MODE:-no}" = "yes" ]; then
+        CMD="$CMD --address 127.0.0.1"
+    fi
 
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
@@ -538,6 +553,10 @@ change_ports() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
+    if [ "${NGINX_MODE:-no}" = "yes" ]; then
+        CMD="$CMD --address 127.0.0.1"
+    fi
+
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
@@ -601,7 +620,11 @@ change_workers() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
-    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
+    if [ "${NGINX_MODE:-no}" = "yes" ]; then
+        CMD="$CMD --address 127.0.0.1"
+    fi
+
+    if [ -n "$AD_TAG" ]
         CMD="$CMD -P $AD_TAG"
     fi
 

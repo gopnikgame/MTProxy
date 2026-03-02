@@ -284,13 +284,22 @@ show_connection_info() {
         CLIENT_SECRET="$SECRET"
     fi
 
-    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$EXTERNAL_PORT&secret=$CLIENT_SECRET"
+    # Определяем порт для клиентской ссылки:
+    # - Nginx режим (NGINX_MODE=yes): клиенты подключаются через Nginx на порт 443
+    # - Иначе: прямое подключение к MTProxy на EXTERNAL_PORT
+    if [ "$NGINX_MODE" = "yes" ]; then
+        CLIENT_PORT=443
+    else
+        CLIENT_PORT="$EXTERNAL_PORT"
+    fi
+
+    PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$CLIENT_PORT&secret=$CLIENT_SECRET"
 
     echo
     echo "═══════════════════════════════════════════════════════════"
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
     echo "   Сервер:     $SERVER_ADDR"
-    echo "   Порт:       $EXTERNAL_PORT"
+    echo "   Порт:       $CLIENT_PORT"
     echo "   Секрет:     $CLIENT_SECRET"
     echo "   Воркеры:    $WORKERS"
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then

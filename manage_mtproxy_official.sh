@@ -624,7 +624,7 @@ change_workers() {
         CMD="$CMD --address 127.0.0.1"
     fi
 
-    if [ -n "$AD_TAG" ]
+    if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
 

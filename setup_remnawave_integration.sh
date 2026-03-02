@@ -258,8 +258,12 @@ update_stream_conf() {
 
     if [ -f "$STREAM_CONF" ]; then
         # Извлекаем существующие домены из map блока
+        # Важно: regex с ';' нельзя вставлять напрямую в [[ =~ ]] -
+        # bash парсит ';' как разделитель команды ещё до входа в контекст regex.
+        local _map_re='^[[:space:]]*([a-zA-Z0-9\.-]+)[[:space:]]+([a-zA-Z0-9_]+);'
+        local _srv_re='server[[:space:]]+127\.0\.0\.1:([0-9]+);'
         while IFS= read -r line; do
-            if [[ $line =~ ^[[:space:]]*([a-zA-Z0-9\.\-]+)[[:space:]]+([a-zA-Z0-9_]+); ]]; then
+            if [[ $line =~ $_map_re ]]; then
                 domain="${BASH_REMATCH[1]}"
                 backend="${BASH_REMATCH[2]}"
 
@@ -274,7 +278,7 @@ update_stream_conf() {
             if [[ $line =~ upstream[[:space:]]+([a-zA-Z0-9_]+)[[:space:]]*\{ ]]; then
                 current_upstream="${BASH_REMATCH[1]}"
             fi
-            if [[ $line =~ server[[:space:]]+127\.0\.0\.1:([0-9]+); ]] && [ -n "$current_upstream" ]; then
+            if [[ $line =~ $_srv_re ]] && [ -n "$current_upstream" ]; then
                 BACKEND_PORTS["$current_upstream"]="${BASH_REMATCH[1]}"
                 current_upstream=""
             fi

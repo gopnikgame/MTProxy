@@ -729,10 +729,7 @@ integrate_with_remnawave() {
     print_success "Remnawave обнаружена"
     echo
     
-    read -p "Настроить интеграцию с Remnawave (Nginx SNI)? [y/N]: " -n 1 -r
-    echo
-    
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if ! read_yes_no "Настроить интеграцию с Remnawave (Nginx SNI)?" "n"; then
         print_info "Интеграция пропущена"
         return
     fi

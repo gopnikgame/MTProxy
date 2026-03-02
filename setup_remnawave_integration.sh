@@ -114,6 +114,39 @@ backup_file() {
     fi
 }
 
+# Проверяет IPv4-разрешение TLS-домена маскировки.
+# MTProxy C-бинарник использует AF_INET сокеты; если getaddrinfo() возвращает
+# IPv6-адрес первым — connect() завершается с EINVAL ("Invalid argument").
+# При обнаружении IPv6-приоритета автоматически добавляет запись в /etc/hosts
+# для принудительного IPv4-разрешения (затрагивает только этот домен).
+ensure_tls_domain_ipv4() {
+    local domain="$1"
+
+    local ipv4
+    ipv4=$(host -t A "$domain" 2>/dev/null | awk '/has address/{print $4}' | head -n1)
+    if [ -z "$ipv4" ]; then
+        print_error "Домен $domain не имеет IPv4 A-записи!"
+        print_info "MTProxy C-бинарник поддерживает только AF_INET сокеты"
+        print_info "Без A-записи — connect(): Invalid argument (EINVAL) при каждом соединении"
+        return 1
+    fi
+
+    # Проверяем какой адрес getaddrinfo() вернёт MTProxy в рантайме
+    local first_addr
+    first_addr=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | head -n1)
+
+    if [[ "$first_addr" == *:* ]]; then
+        print_warning "Система разрешает $domain в IPv6 первым: $first_addr"
+        print_warning "MTProxy (AF_INET сокет) получит connect(): Invalid argument!"
+        print_info "Принудительно прописываем IPv4 в /etc/hosts: $ipv4 $domain"
+        sed -i "/ ${domain}$/d" /etc/hosts 2>/dev/null || true
+        echo "$ipv4 $domain" >> /etc/hosts
+        print_success "Добавлено в /etc/hosts: $ipv4 $domain (принудительный IPv4)"
+    else
+        print_success "TLS домен $domain → IPv4: ${first_addr:-$ipv4}"
+    fi
+}
+
 ################################################################################
 # Интерактивная настройка
 ################################################################################
@@ -204,6 +237,16 @@ interactive_setup() {
             print_info "MTProxy попытается подключиться к себе через Nginx → циклическое соединение"
             print_info "Используйте внешний сайт: www.google.com, telegram.org, cloudflare.com"
             EXISTING_TLS_DOMAIN="www.google.com"
+            continue
+        fi
+        # MTProxy C создаёт AF_INET сокеты — домен должен иметь A-запись (IPv4)
+        local _tls_check_ip
+        _tls_check_ip=$(host -t A "$TLS_DOMAIN" 2>/dev/null | awk '/has address/{print $4}' | head -n1)
+        if [ -z "$_tls_check_ip" ]; then
+            print_error "Домен $TLS_DOMAIN не имеет IPv4 A-записи!"
+            print_info "MTProxy (C) использует AF_INET сокеты → IPv6 вызывает connect(): Invalid argument"
+            print_info "Используйте домен с A-записью: cloudflare.com, one.one.one.one, telegram.org"
+            EXISTING_TLS_DOMAIN="cloudflare.com"
             continue
         fi
         break
@@ -555,6 +598,8 @@ update_mtproxy_config() {
             return 1
         fi
         EFFECTIVE_TLS="$TLS_DOMAIN"
+        # Гарантируем IPv4-разрешение для TLS домена (MTProxy C не поддерживает IPv6)
+        ensure_tls_domain_ipv4 "$EFFECTIVE_TLS" || true
         # Удаляем старый -D если есть (может указывать на неверный домен)
         sed -i 's| -D [^ ]*||g' "$SERVICE_FILE"
         sed -i "s|--aes-pwd|-D $EFFECTIVE_TLS --aes-pwd|" "$SERVICE_FILE"

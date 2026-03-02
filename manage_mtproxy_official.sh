@@ -48,6 +48,35 @@ print_info() {
     echo -e "${CYAN}ℹ $1${NC}"
 }
 
+# Проверяет, доступен ли порт (не занят другим процессом)
+# Возвращает: 0=доступен, 1=занят
+is_port_available() {
+    local port="$1"
+    if ss -tuln 2>/dev/null | grep -q ":${port} " || \
+       netstat -tuln 2>/dev/null | grep -q ":${port} "; then
+        return 1
+    fi
+    return 0
+}
+
+# Открывает порт в UFW (если UFW активен)
+open_ufw_port() {
+    local port="$1"
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${port}/tcp" >/dev/null 2>&1
+        print_success "UFW: порт ${port}/tcp открыт"
+    fi
+}
+
+# Закрывает порт в UFW (если UFW активен)
+close_ufw_port() {
+    local port="$1"
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw delete allow "${port}/tcp" >/dev/null 2>&1
+        print_success "UFW: порт ${port}/tcp закрыт"
+    fi
+}
+
 # Проверка установки
 check_installation() {
     if [ ! -d "$INSTALL_DIR" ]; then
@@ -529,21 +558,35 @@ change_ports() {
     echo "  Порт статистики:         $STATS_PORT"
     echo
     
-    read -p "Новый внешний порт [$EXTERNAL_PORT]: " NEW_EXTERNAL_PORT
-    NEW_EXTERNAL_PORT=${NEW_EXTERNAL_PORT:-$EXTERNAL_PORT}
-    
+    OLD_EXTERNAL_PORT="$EXTERNAL_PORT"
+    while true; do
+        read -p "Новый внешний порт [$EXTERNAL_PORT]: " NEW_EXTERNAL_PORT
+        NEW_EXTERNAL_PORT=${NEW_EXTERNAL_PORT:-$EXTERNAL_PORT}
+        if [ "$NEW_EXTERNAL_PORT" = "$OLD_EXTERNAL_PORT" ] || is_port_available "$NEW_EXTERNAL_PORT"; then
+            break
+        else
+            print_warning "Порт $NEW_EXTERNAL_PORT уже занят. Введите другой порт."
+        fi
+    done
+
     read -p "Новый порт статистики [$STATS_PORT]: " NEW_STATS_PORT
     NEW_STATS_PORT=${NEW_STATS_PORT:-$STATS_PORT}
-    
+
     # Обновляем конфигурацию
     sed -i "s/^EXTERNAL_PORT=.*/EXTERNAL_PORT=$NEW_EXTERNAL_PORT/" "$CONFIG_FILE"
     sed -i "s/^STATS_PORT=.*/STATS_PORT=$NEW_STATS_PORT/" "$CONFIG_FILE"
     
     print_success "Порты обновлены"
-    
+
+    # UFW: обновляем правила (только для прямого подключения)
+    if [ "${NGINX_MODE:-no}" = "no" ] && [ "$NEW_EXTERNAL_PORT" != "$OLD_EXTERNAL_PORT" ]; then
+        close_ufw_port "$OLD_EXTERNAL_PORT"
+        open_ufw_port "$NEW_EXTERNAL_PORT"
+    fi
+
     # Обновляем systemd сервис
     print_info "Обновление systemd сервиса..."
-    
+
     source "$CONFIG_FILE"
     
     CMD="/opt/MTProxy/objs/bin/mtproto-proxy"
@@ -745,6 +788,14 @@ uninstall() {
         print_info "Удаление симлинка /usr/local/bin/mtproxy..."
         rm -f /usr/local/bin/mtproxy
         print_success "Симлинк удален"
+    fi
+
+    # Закрываем порт в UFW (только для прямого подключения)
+    if [ -f "$CONFIG_FILE" ]; then
+        source "$CONFIG_FILE" 2>/dev/null
+        if [ "${NGINX_MODE:-no}" = "no" ] && [ -n "$EXTERNAL_PORT" ]; then
+            close_ufw_port "$EXTERNAL_PORT"
+        fi
     fi
 
     # Удаляем файлы

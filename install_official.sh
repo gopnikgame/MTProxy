@@ -53,6 +53,35 @@ print_info() {
     echo -e "${CYAN}ℹ $1${NC}"
 }
 
+# Проверяет, доступен ли порт (не занят другим процессом)
+# Возвращает: 0=доступен, 1=занят
+is_port_available() {
+    local port="$1"
+    if ss -tuln 2>/dev/null | grep -q ":${port} " || \
+       netstat -tuln 2>/dev/null | grep -q ":${port} "; then
+        return 1
+    fi
+    return 0
+}
+
+# Открывает порт в UFW (если UFW активен)
+open_ufw_port() {
+    local port="$1"
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${port}/tcp" >/dev/null 2>&1
+        print_success "UFW: порт ${port}/tcp открыт"
+    fi
+}
+
+# Закрывает порт в UFW (если UFW активен)
+close_ufw_port() {
+    local port="$1"
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw delete allow "${port}/tcp" >/dev/null 2>&1
+        print_success "UFW: порт ${port}/tcp закрыт"
+    fi
+}
+
 # Читает Y/n или y/N ответ с валидацией. Повторяет запрос при некорректном вводе
 # (в том числе при русской раскладке)
 # Использование: read_yes_no "Вопрос?" [y|n]  (умолчание: y)
@@ -430,8 +459,15 @@ interactive_configuration() {
         DEFAULT_EXT_PORT="${EXTERNAL_PORT:-443}"
     fi
     echo
-    read -p "Порт MTProxy [${DEFAULT_EXT_PORT}]: " input
-    EXTERNAL_PORT=${input:-${DEFAULT_EXT_PORT}}
+    while true; do
+        read -p "Порт MTProxy [${DEFAULT_EXT_PORT}]: " input
+        EXTERNAL_PORT=${input:-${DEFAULT_EXT_PORT}}
+        if is_port_available "$EXTERNAL_PORT"; then
+            break
+        else
+            print_warning "Порт $EXTERNAL_PORT уже занят. Введите другой порт."
+        fi
+    done
 
     echo
     echo "Порт статистики (локальный): доступен только через 127.0.0.1"
@@ -659,10 +695,20 @@ WantedBy=multi-user.target
 EOF
     
     print_success "Systemd сервис создан"
-    
+
     # Перезагружаем systemd
     systemctl daemon-reload
     print_success "Systemd перезагружен"
+
+    # Открываем порт в UFW (только для прямого подключения)
+    if [ "$NGINX_MODE" = "no" ]; then
+        if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+            ufw allow "${EXTERNAL_PORT}/tcp" >/dev/null 2>&1
+            print_success "UFW: порт $EXTERNAL_PORT/tcp открыт"
+        else
+            print_info "UFW не активен. Откройте порт вручную: sudo ufw allow $EXTERNAL_PORT/tcp"
+        fi
+    fi
 }
 
 ################################################################################

@@ -504,7 +504,7 @@ interactive_configuration() {
     echo
     
     # Определяем внешний IP
-    DETECTED_IP=$(curl -s ifconfig.me || curl -s icanhazip.com || echo "")
+    DETECTED_IP=$(curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
     if [ -n "$DETECTED_IP" ]; then
         print_info "Обнаружен внешний IP: $DETECTED_IP"
     fi
@@ -795,6 +795,11 @@ setup_management_scripts() {
 ################################################################################
 
 integrate_with_remnawave() {
+    # В режиме прямого подключения Nginx/Remnawave не используются
+    if [ "$NGINX_MODE" = "no" ]; then
+        return
+    fi
+
     print_header "Интеграция с Remnawave (опционально)"
     
     if [ ! -d "$REMNANODE_DIR" ]; then
@@ -883,7 +888,7 @@ print_connection_info() {
     elif [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
         SERVER_ADDR="$NAT_IP"
     else
-        SERVER_ADDR=$(curl -s ifconfig.me || curl -s icanhazip.com || hostname -I | awk '{print $1}')
+        SERVER_ADDR=$(curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
     fi
     
     # Формируем клиентский секрет для ссылки:

@@ -298,7 +298,7 @@ show_connection_info() {
     elif [ "$USE_NAT" = "yes" ] && [ -n "$NAT_IP" ]; then
         SERVER_ADDR="$NAT_IP"
     else
-        SERVER_ADDR=$(curl -s ifconfig.me 2>/dev/null || curl -s icanhazip.com 2>/dev/null || hostname -I | awk '{print $1}')
+        SERVER_ADDR=$(curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1)
     fi
     
     # Определяем секрет для клиентской ссылки:

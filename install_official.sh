@@ -53,6 +53,27 @@ print_info() {
     echo -e "${CYAN}ℹ $1${NC}"
 }
 
+# Читает Y/n или y/N ответ с валидацией. Повторяет запрос при некорректном вводе
+# (в том числе при русской раскладке)
+# Использование: read_yes_no "Вопрос?" [y|n]  (умолчание: y)
+# Возвращает: 0=да, 1=нет
+read_yes_no() {
+    local prompt="$1"
+    local default="${2:-y}"
+    local hint
+    [ "$default" = "y" ] && hint="[Y/n]" || hint="[y/N]"
+    while true; do
+        read -p "$prompt $hint: " -n 1 -r
+        echo
+        case "$REPLY" in
+            Y|y) return 0 ;;
+            N|n) return 1 ;;
+            "")  [ "$default" = "y" ] && return 0 || return 1 ;;
+            *)   print_warning "Неверный ввод. Нажмите Y (да) или N (нет)" ;;
+        esac
+    done
+}
+
 # Проверка прав root
 check_root() {
     if [ "$EUID" -ne 0 ]; then
@@ -335,15 +356,16 @@ interactive_configuration() {
     else
         DEFAULT_MODE_HINT="2"
     fi
-    read -p "Выберите режим [1/2, по умолчанию $DEFAULT_MODE_HINT]: " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^2$ ]]; then
-        NGINX_MODE="no"
-        print_info "Режим: прямое подключение"
-    else
-        NGINX_MODE="yes"
-        print_info "Режим: через Nginx (Remnawave SNI)"
-    fi
+    while true; do
+        read -p "Выберите режим [1/2, по умолчанию $DEFAULT_MODE_HINT]: " -n 1 -r
+        echo
+        _m="${REPLY:-$DEFAULT_MODE_HINT}"
+        case "$_m" in
+            1) NGINX_MODE="yes"; print_info "Режим: через Nginx (Remnawave SNI)"; break ;;
+            2) NGINX_MODE="no";  print_info "Режим: прямое подключение"; break ;;
+            *) print_warning "Неверный ввод. Нажмите 1 или 2" ;;
+        esac
+    done
 
     # Секрет пользователя
     echo
@@ -356,9 +378,7 @@ interactive_configuration() {
         echo -e "Текущий секрет: ${GREEN}$EXISTING_SECRET${NC}"
     fi
     
-    read -p "Сгенерировать новый секрет? [Y/n]: " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+    if read_yes_no "Сгенерировать новый секрет?" "y"; then
         SECRET=$(head -c 16 /dev/urandom | xxd -ps)
         echo "$SECRET" > "$INSTALL_DIR/run/secret.txt"
         print_success "Новый секрет: $SECRET"
@@ -379,9 +399,7 @@ interactive_configuration() {
         print_info "Random Padding отключён (несовместим с fakeTLS/Nginx-режимом)"
         print_info "Защита от DPI обеспечивается через TLS-маскировку (-D domain)"
     else
-        read -p "Включить Random Padding (защита от DPI)? [Y/n]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Nn]$ ]]; then
+        if read_yes_no "Включить Random Padding (защита от DPI)?" "y"; then
             USE_DD_PREFIX="yes"
             DISPLAY_SECRET="dd$SECRET"
             print_success "Random Padding включён"
@@ -455,9 +473,7 @@ interactive_configuration() {
         print_info "Обнаружен внешний IP: $DETECTED_IP"
     fi
     
-    read -p "Использовать NAT? [y/N]: " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
+    if read_yes_no "Использовать NAT?" "n"; then
         USE_NAT="yes"
         DETECTED_LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I | awk '{print $1}')
         read -p "Локальный (внутренний) IP [${NAT_LOCAL_IP:-$DETECTED_LOCAL_IP}]: " input
@@ -499,9 +515,7 @@ interactive_configuration() {
         echo    "  С доменом: TLS/fakeTLS маскировка, лучше обходит блокировки:"
         echo -e "  ${CYAN}  tg://proxy?server=domain&port=$EXTERNAL_PORT&secret=ee<hex>${NC}"
         echo
-        read -p "Использовать доменное имя? [y/N]: " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
+        if read_yes_no "Использовать доменное имя?" "n"; then
             USE_DOMAIN="yes"
             read -p "Доменное имя: " DOMAIN_NAME
             if host "$DOMAIN_NAME" > /dev/null 2>&1; then

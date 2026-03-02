@@ -151,11 +151,15 @@ interactive_setup() {
             break
         else
             print_warning "Не удалось разрешить домен $MTPROXY_DOMAIN"
-            read -p "Продолжить без проверки DNS? [y/N]: " -n 1 -r
-            echo
-            if [[ $REPLY =~ ^[Yy]$ ]]; then
-                break
-            fi
+            while true; do
+                read -p "Продолжить без проверки DNS? [y/N]: " -n 1 -r
+                echo
+                case "$REPLY" in
+                    Y|y) break 2 ;;
+                    N|n|"") break ;;
+                    *)  print_warning "Неверный ввод. Нажмите Y (да) или N (нет)" ;;
+                esac
+            done
         fi
     done
     
@@ -166,18 +170,22 @@ interactive_setup() {
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     echo "Backend порт для Nginx (должен отличаться от других сервисов)"
-    read -p "Backend порт [10443]: " BACKEND_PORT
-    BACKEND_PORT=${BACKEND_PORT:-10443}
-    
+    print_info "По умолчанию используется EXTERNAL_PORT из конфигурации MTProxy"
+    read -p "Backend порт [${EXTERNAL_PORT:-10443}]: " BACKEND_PORT
+    BACKEND_PORT=${BACKEND_PORT:-${EXTERNAL_PORT:-10443}}
+
     # Проверка доступности порта
     if netstat -tuln 2>/dev/null | grep -q ":$BACKEND_PORT "; then
         print_warning "Порт $BACKEND_PORT уже используется!"
-        read -p "Всё равно использовать этот порт? [y/N]: " -n 1 -r
-        echo
-        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-            print_info "Перезапустите скрипт с другим портом"
-            exit 1
-        fi
+        while true; do
+            read -p "Всё равно использовать этот порт? [y/N]: " -n 1 -r
+            echo
+            case "$REPLY" in
+                Y|y) break ;;
+                N|n|"") print_info "Перезапустите скрипт с другим портом"; exit 1 ;;
+                *)    print_warning "Неверный ввод. Нажмите Y (да) или N (нет)" ;;
+            esac
+        done
     fi
 }
 

@@ -404,12 +404,13 @@ change_secret() {
     fi
 
     # TLS-режим для SNI-роутинга через Nginx
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
-        CMD="$CMD -D $DOMAIN_NAME"
+    # TLS_DOMAIN — домен маскировки (внешний сайт), НЕ сервисный домен
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
+        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
-    
+
     # Обновляем service файл
     sed -i "s|^ExecStart=.*|ExecStart=$CMD|" "/etc/systemd/system/$SERVICE_NAME.service"
     
@@ -482,8 +483,8 @@ change_ad_tag() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
-        CMD="$CMD -D $DOMAIN_NAME"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
+        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -545,8 +546,8 @@ change_ports() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
-        CMD="$CMD -D $DOMAIN_NAME"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
+        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -608,8 +609,8 @@ change_workers() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
-        CMD="$CMD -D $DOMAIN_NAME"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
+        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"

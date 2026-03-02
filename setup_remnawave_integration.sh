@@ -182,7 +182,23 @@ interactive_setup() {
     # Backend порт для Nginx
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "${CYAN}2. BACKEND ПОРТ${NC}"
+    echo -e "${CYAN}2. ДОМЕН МАСКИРОВКИ TLS${NC}"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo
+    echo "MTProxy подключается к этому домену чтобы получить реальный TLS fingerprint для маскировки."
+    echo "Должен быть ВНЕШНИЙ сайт с HTTPS — НЕ сервисный домен этого сервера."
+    print_info "Примеры: www.google.com, www.cloudflare.com, telegram.org"
+    echo
+    # Используем значение из .env если уже есть
+    EXISTING_TLS_DOMAIN=$(grep '^TLS_DOMAIN=' "$MTPROXY_DIR/.env" 2>/dev/null | cut -d= -f2)
+    read -p "Домен маскировки [${EXISTING_TLS_DOMAIN:-www.google.com}]: " TLS_DOMAIN
+    TLS_DOMAIN=${TLS_DOMAIN:-${EXISTING_TLS_DOMAIN:-www.google.com}}
+    print_success "Домен маскировки: $TLS_DOMAIN"
+
+    # Backend порт для Nginx
+    echo
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo -e "${CYAN}3. BACKEND ПОРТ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
     echo "Backend порт для Nginx (должен отличаться от других сервисов)"
@@ -378,8 +394,9 @@ update_stream_conf() {
         # ngx_stream_realip_module включён в официальный образ nginx:1.29.1
         echo "# MTProxy relay: strips PROXY protocol before forwarding to MTProxy"
         echo "# nginx:1.29.1 includes ngx_stream_realip_module by default"
+        echo "# 'proxy_protocol' on listen is REQUIRED for set_real_ip_from to consume the header"
         echo "server {"
-        echo "    listen 127.0.0.1:$RELAY_PORT;"
+        echo "    listen 127.0.0.1:$RELAY_PORT proxy_protocol;"
         echo "    set_real_ip_from 127.0.0.1;"
         echo "    proxy_pass 127.0.0.1:$BACKEND_PORT;"
         echo "}"
@@ -492,6 +509,14 @@ update_mtproxy_config() {
         sed -i "s/^USE_DOMAIN=.*/USE_DOMAIN=yes/" "$MTPROXY_DIR/.env"
     fi
 
+    # TLS_DOMAIN — домен маскировки (для флага -D), НЕ сервисный домен.
+    # MTProxy подключается к этому внешнему сайту для получения TLS fingerprint.
+    if ! grep -q "^TLS_DOMAIN=" "$MTPROXY_DIR/.env"; then
+        echo "TLS_DOMAIN=$TLS_DOMAIN" >> "$MTPROXY_DIR/.env"
+    else
+        sed -i "s/^TLS_DOMAIN=.*/TLS_DOMAIN=$TLS_DOMAIN/" "$MTPROXY_DIR/.env"
+    fi
+
     # Обновляем systemd сервис:
     # 1. Добавляем -D $DOMAIN для TLS-режима (fakeTLS) — обязательно для SNI-роутинга
     # 2. Исправляем -S: должен быть SECRET (32 hex), не DISPLAY_SECRET (с dd/ee префиксом)
@@ -505,13 +530,14 @@ update_mtproxy_config() {
             print_success "Исправлен -S: убран dd/ee-префикс (сервер требует ровно 32 hex)"
         fi
 
-        # Добавляем -D DOMAIN если ещё нет
-        if ! grep -q "\-D $MTPROXY_DOMAIN" "$SERVICE_FILE"; then
-            sed -i "s|--aes-pwd|-D $MTPROXY_DOMAIN --aes-pwd|" "$SERVICE_FILE"
-            print_success "Добавлен -D $MTPROXY_DOMAIN (TLS-режим/fakeTLS)"
-        else
-            print_info "-D $MTPROXY_DOMAIN уже присутствует в сервисе"
-        fi
+        # Устанавливаем -D TLS_DOMAIN (домен маскировки, НЕ сервисный домен).
+        # TLS_DOMAIN — внешний сайт, MTProxy соединяется с ним для получения TLS fingerprint.
+        # Это предотвращает циклическое подключение MTProxy к самому себе через Nginx.
+        EFFECTIVE_TLS="${TLS_DOMAIN:-$MTPROXY_DOMAIN}"
+        # Удаляем старый -D если есть (может указывать на неверный домен)
+        sed -i 's| -D [^ ]*||g' "$SERVICE_FILE"
+        sed -i "s|--aes-pwd|-D $EFFECTIVE_TLS --aes-pwd|" "$SERVICE_FILE"
+        print_success "Установлен -D $EFFECTIVE_TLS (домен маскировки TLS)"
 
         systemctl daemon-reload
         print_success "Systemd сервис обновлен"
@@ -622,11 +648,12 @@ print_final_info() {
     echo "═══════════════════════════════════════════════════════════"
     echo
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
-    echo "   Домен:          $MTPROXY_DOMAIN"
+    echo "   Домен сервиса: $MTPROXY_DOMAIN"
+    echo "   Домен маскировки: ${TLS_DOMAIN:-$MTPROXY_DOMAIN} (флаг -D)"
     echo "   Внешний порт:   443 (Nginx SNI)"
     echo "   Relay порт:     $RELAY_PORT (nginx relay, снимает proxy_protocol)"
     echo "   MTProxy порт:   $BACKEND_PORT (внутренний)"
-    echo "   Секрет сервера: $SECRET (32 hex, используется с -S и -D)"
+    echo "   Секрет сервера: $SECRET (32 hex, используется с -S)"
     echo "   Секрет клиента: $EE_SECRET (ee-префикс = TLS/fakeTLS режим)"
     echo
     echo -e "${CYAN}🔗 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ:${NC}"

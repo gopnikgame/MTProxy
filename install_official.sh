@@ -488,13 +488,12 @@ interactive_configuration() {
     echo
     if [ "$NGINX_MODE" = "yes" ]; then
         echo -e "  ${GREEN}► Через Nginx: домен ОБЯЗАТЕЛЕН${NC}"
-        echo    "  MTProxy работает в TLS/fakeTLS режиме (флаг -D domain)."
         echo    "  Nginx роутит трафик по SNI на основе этого домена."
         echo    "  Используйте OTДЕЛЬНЫЙ домен (не тот что у Remnawave/XRay)."
         echo -e "  ${YELLOW}Домен должен указывать A-записью на этот сервер.${NC}"
         echo -e "  ${YELLOW}Пример: proxy.example.com, mt.example.com${NC}"
         echo
-        read -p "Домен MTProxy: " DOMAIN_NAME
+        read -p "Домен MTProxy (сервисный, для подключения клиентов): " DOMAIN_NAME
         if [ -n "$DOMAIN_NAME" ]; then
             USE_DOMAIN="yes"
             if host "$DOMAIN_NAME" > /dev/null 2>&1; then
@@ -508,6 +507,15 @@ interactive_configuration() {
             print_warning "Домен не указан! Nginx SNI не будет работать без домена."
             USE_DOMAIN="no"
         fi
+        echo
+        echo -e "  ${CYAN}► Домен маскировки (для флага -D):${NC}"
+        echo    "  MTProxy подключается к этому домену чтобы получить реальный TLS fingerprint."
+        echo    "  Должен быть ВНЕШНИЙ сайт с HTTPS — НЕ этот сервер."
+        echo -e "  ${YELLOW}Примеры: www.google.com, www.cloudflare.com, telegram.org${NC}"
+        echo
+        read -p "Домен маскировки [www.google.com]: " TLS_DOMAIN
+        TLS_DOMAIN=${TLS_DOMAIN:-www.google.com}
+        print_success "Домен маскировки: $TLS_DOMAIN"
     else
         echo -e "  ${YELLOW}► Прямое подключение: домен опционален${NC}"
         echo    "  Без домена: подключение по IP-адресу:"
@@ -524,6 +532,8 @@ interactive_configuration() {
             else
                 print_warning "Не удалось разрешить домен $DOMAIN_NAME"
             fi
+            # В прямом режиме домен маскировки = сервисный домен
+            TLS_DOMAIN="$DOMAIN_NAME"
         else
             USE_DOMAIN="no"
         fi
@@ -558,6 +568,7 @@ NAT_LOCAL_IP=${NAT_LOCAL_IP}
 NAT_IP=${NAT_IP}
 USE_DOMAIN=$USE_DOMAIN
 DOMAIN_NAME=${DOMAIN_NAME}
+TLS_DOMAIN=${TLS_DOMAIN}
 EOF
     
     print_success "Конфигурация сохранена в $INSTALL_DIR/.env"
@@ -591,9 +602,11 @@ create_systemd_service() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    # TLS-режим (fakeTLS): -D включает TLS-транспорт и требуется для SNI-роутинга
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$DOMAIN_NAME" ]; then
-        CMD="$CMD -D $DOMAIN_NAME"
+    # TLS-режим (fakeTLS): -D задаёт домен маскировки (чей TLS fingerprint имитировать).
+    # TLS_DOMAIN — внешний сайт (напр. www.google.com), НЕ сервисный домен.
+    # Это предотвращает циклическое подключение MTProxy к самому себе через Nginx.
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
+        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
     fi
 
     # ВАЖНО: --aes-pwd и конфиг должны быть В КОНЦЕ и именно в таком порядке!

@@ -13,7 +13,6 @@ set -e
 MTPROXY_REPO="https://github.com/TelegramMessenger/MTProxy"
 INSTALL_DIR="/opt/MTProxy"
 SERVICE_NAME="mtproxy"
-REMNANODE_DIR="/opt/remnanode"
 # Директория расположения install_official.sh (для поиска смежных скриптов)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -356,57 +355,24 @@ generate_secret() {
 
 interactive_configuration() {
     print_header "Интерактивная настройка"
-    
+
     # Загружаем старую конфигурацию если есть
     if [ -f "$INSTALL_DIR/.env" ]; then
         source "$INSTALL_DIR/.env"
         print_info "Загружена существующая конфигурация"
     fi
 
-    # Выбор режима работы
-    echo
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo -e "${CYAN}РЕЖИМ РАБОТЫ${NC}"
-    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo
-    echo -e "  ${GREEN}1) Через Nginx / Remnawave СНИ (рекомендуется)${NC}"
-    echo    "     Internet:443 → Nginx → relay → MTProxy:backend"
-    echo    "     ✓ Порт 443 общий с XRay Reality, панелью и др."
-    echo    "     ✓ TLS/fakeTLS маскировка (флаг -D domain)"
-    echo    "     ✓ Требует: домен + Remnawave + setup_remnawave_integration.sh"
-    echo
-    echo -e "  ${YELLOW}2) Прямое подключение (без Nginx)${NC}"
-    echo    "     Internet:PORT → MTProxy напрямую"
-    echo    "     ✓ Проще в настройке, не зависит от Remnawave"
-    echo    "     ✓ Домен опционален (для TLS маскировки)"
-    echo
-    if [ "${NGINX_MODE:-yes}" = "yes" ]; then
-        DEFAULT_MODE_HINT="1"
-    else
-        DEFAULT_MODE_HINT="2"
-    fi
-    while true; do
-        read -p "Выберите режим [1/2, по умолчанию $DEFAULT_MODE_HINT]: " -n 1 -r
-        echo
-        _m="${REPLY:-$DEFAULT_MODE_HINT}"
-        case "$_m" in
-            1) NGINX_MODE="yes"; print_info "Режим: через Nginx (Remnawave SNI)"; break ;;
-            2) NGINX_MODE="no";  print_info "Режим: прямое подключение"; break ;;
-            *) print_warning "Неверный ввод. Нажмите 1 или 2" ;;
-        esac
-    done
-
     # Секрет пользователя
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "${CYAN}1. СЕКРЕТ ПОЛЬЗОВАТЕЛЯ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    
+
     if [ -f "$INSTALL_DIR/run/secret.txt" ]; then
         EXISTING_SECRET=$(cat "$INSTALL_DIR/run/secret.txt")
         echo -e "Текущий секрет: ${GREEN}$EXISTING_SECRET${NC}"
     fi
-    
+
     if read_yes_no "Сгенерировать новый секрет?" "y"; then
         SECRET=$(head -c 16 /dev/urandom | xxd -ps)
         echo "$SECRET" > "$INSTALL_DIR/run/secret.txt"
@@ -415,50 +381,18 @@ interactive_configuration() {
         SECRET=${EXISTING_SECRET:-$(head -c 16 /dev/urandom | xxd -ps)}
         echo "$SECRET" > "$INSTALL_DIR/run/secret.txt"
     fi
-    
-    # Random Padding
-    echo
-    if [ "$NGINX_MODE" = "yes" ]; then
-        # В fakeTLS-режиме (-D domain) клиентский секрет получает префикс 'ee'.
-        # Префикс 'dd' (Random Padding) несовместим с 'ee': сервер с -D ожидает
-        # TLS-хэндшейк, а dd-клиент шлёт MTProto+padding → соединение не установится.
-        # FakeTLS уже обеспечивает маскировку сильнее, чем Random Padding.
-        USE_DD_PREFIX="no"
-        DISPLAY_SECRET="$SECRET"
-        print_info "Random Padding отключён (несовместим с fakeTLS/Nginx-режимом)"
-        print_info "Защита от DPI обеспечивается через TLS-маскировку (-D domain)"
-    else
-        if read_yes_no "Включить Random Padding (защита от DPI)?" "y"; then
-            USE_DD_PREFIX="yes"
-            DISPLAY_SECRET="dd$SECRET"
-            print_success "Random Padding включён"
-            print_info "Секрет с префиксом: dd$SECRET"
-        else
-            USE_DD_PREFIX="no"
-            DISPLAY_SECRET="$SECRET"
-        fi
-    fi
-    
+
     # Порты
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "${CYAN}2. НАСТРОЙКА ПОРТОВ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
-    if [ "$NGINX_MODE" = "yes" ]; then
-        echo -e "  ${GREEN}► Через Nginx: укажите BACKEND-порт MTProxy (не 443!)${NC}"
-        echo    "  схема: Internet:443 → Nginx:443 → relay:RELAY → MTProxy:BACKEND"
-        echo    "  Порт 443 занят Nginx. Клиентская ссылка всегда будет использовать порт 443."
-        echo -e "  ${YELLOW}Рекомендуется: 10443 или любой свободный порт${NC}"
-        DEFAULT_EXT_PORT="${EXTERNAL_PORT:-10443}"
-    else
-        echo -e "  ${YELLOW}► Прямое подключение: порт, на который подключаются клиенты${NC}"
-        echo    "  схема: Internet:PORT → MTProxy:PORT напрямую"
-        echo    "  Порт должен быть открыт в firewall: sudo ufw allow PORT/tcp"
-        echo -e "  ${YELLOW}Рекомендуется: 443 (стандартный HTTPS, меньше блокировок)${NC}"
-        DEFAULT_EXT_PORT="${EXTERNAL_PORT:-443}"
-    fi
+    echo -e "  ${YELLOW}► Порт, на который подключаются клиенты${NC}"
+    echo    "  Порт должен быть открыт в firewall: sudo ufw allow PORT/tcp"
+    echo -e "  ${YELLOW}Рекомендуется: 443 (стандартный HTTPS, меньше блокировок)${NC}"
     echo
+    DEFAULT_EXT_PORT="${EXTERNAL_PORT:-443}"
     while true; do
         read -p "Порт MTProxy [${DEFAULT_EXT_PORT}]: " input
         EXTERNAL_PORT=${input:-${DEFAULT_EXT_PORT}}
@@ -473,7 +407,7 @@ interactive_configuration() {
     echo "Порт статистики (локальный): доступен только через 127.0.0.1"
     read -p "Порт статистики [${STATS_PORT:-8888}]: " input
     STATS_PORT=${input:-${STATS_PORT:-8888}}
-    
+
     # Количество воркеров
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -485,7 +419,7 @@ interactive_configuration() {
     echo "Доступно CPU ядер: $CPU_CORES"
     read -p "Количество воркеров [${WORKERS:-1}]: " input
     WORKERS=${input:-${WORKERS:-1}}
-    
+
     # AD Tag
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -495,20 +429,20 @@ interactive_configuration() {
     echo "AD Tag можно получить у @MTProxybot для монетизации"
     read -p "AD Tag [${AD_TAG:-пропустить}]: " input
     AD_TAG=${input:-${AD_TAG}}
-    
+
     # NAT и домен
     echo
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo -e "${CYAN}5. СЕТЕВЫЕ НАСТРОЙКИ${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo
-    
+
     # Определяем внешний IP
     DETECTED_IP=$(curl -4 -s ifconfig.me 2>/dev/null || curl -4 -s icanhazip.com 2>/dev/null || hostname -I | tr ' ' '\n' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || echo "")
     if [ -n "$DETECTED_IP" ]; then
         print_info "Обнаружен внешний IP: $DETECTED_IP"
     fi
-    
+
     if read_yes_no "Использовать NAT?" "n"; then
         USE_NAT="yes"
         DETECTED_LOCAL_IP=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I | awk '{print $1}')
@@ -519,69 +453,54 @@ interactive_configuration() {
     else
         USE_NAT="no"
     fi
-    
-    # Домен (для TLS)
+
+    # Домен
     echo
-    if [ "$NGINX_MODE" = "yes" ]; then
-        echo -e "  ${GREEN}► Через Nginx: домен ОБЯЗАТЕЛЕН${NC}"
-        echo    "  Nginx роутит трафик по SNI на основе этого домена."
-        echo    "  Используйте OTДЕЛЬНЫЙ домен (не тот что у Remnawave/XRay)."
-        echo -e "  ${YELLOW}Домен должен указывать A-записью на этот сервер.${NC}"
-        echo -e "  ${YELLOW}Пример: proxy.example.com, mt.example.com${NC}"
-        echo
-        read -p "Домен MTProxy (сервисный, для подключения клиентов): " DOMAIN_NAME
-        if [ -n "$DOMAIN_NAME" ]; then
-            USE_DOMAIN="yes"
-            if host "$DOMAIN_NAME" > /dev/null 2>&1; then
-                DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
-                print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
-            else
-                print_warning "Не удалось разрешить домен $DOMAIN_NAME"
-                print_info "Убедитесь что A-запись добавлена перед запуском"
-            fi
+    echo -e "  ${YELLOW}► Доменное имя (опционально)${NC}"
+    echo    "  Без домена: подключение по IP-адресу, секрет без префикса или с 'dd'"
+    echo    "  С доменом: TLS/fakeTLS маскировка (секрет с 'ee'), лучше обходит блокировки"
+    echo
+    if read_yes_no "Использовать доменное имя?" "n"; then
+        USE_DOMAIN="yes"
+        read -p "Доменное имя (для клиентской ссылки): " DOMAIN_NAME
+        if host "$DOMAIN_NAME" > /dev/null 2>&1; then
+            DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
+            print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
         else
-            print_warning "Домен не указан! Nginx SNI не будет работать без домена."
-            USE_DOMAIN="no"
+            print_warning "Не удалось разрешить домен $DOMAIN_NAME"
         fi
         echo
-        echo -e "  ${CYAN}► Домен маскировки (для флага -D):${NC}"
-        echo    "  MTProxy подключается к этому домену чтобы получить реальный TLS fingerprint."
+        echo -e "  ${CYAN}► Домен маскировки TLS (для флага -D):${NC}"
+        echo    "  MTProxy подключается к этому домену для получения TLS fingerprint."
         echo    "  Должен быть ВНЕШНИЙ сайт с HTTPS — НЕ этот сервер."
         echo -e "  ${YELLOW}Примеры: www.google.com, www.cloudflare.com, telegram.org${NC}"
         echo
-        read -p "Домен маскировки [www.google.com]: " TLS_DOMAIN
-        TLS_DOMAIN=${TLS_DOMAIN:-www.google.com}
-        print_success "Домен маскировки: $TLS_DOMAIN"
+        EXISTING_TLS="${TLS_DOMAIN:-www.google.com}"
+        read -p "Домен маскировки [${EXISTING_TLS}]: " input
+        TLS_DOMAIN=${input:-$EXISTING_TLS}
+        USE_DD_PREFIX="no"
+        DISPLAY_SECRET="ee$SECRET"
+        print_success "TLS маскировка включена: $TLS_DOMAIN"
+        print_info "Секрет клиента: ee$SECRET (ee-префикс = TLS режим)"
     else
-        echo -e "  ${YELLOW}► Прямое подключение: домен опционален${NC}"
-        echo    "  Без домена: подключение по IP-адресу:"
-        echo -e "  ${CYAN}  tg://proxy?server=${DETECTED_IP:-IP}&port=$EXTERNAL_PORT&secret=<hex>${NC}"
-        echo    "  С доменом: TLS/fakeTLS маскировка, лучше обходит блокировки:"
-        echo -e "  ${CYAN}  tg://proxy?server=domain&port=$EXTERNAL_PORT&secret=ee<hex>${NC}"
+        USE_DOMAIN="no"
+        DOMAIN_NAME=""
+        TLS_DOMAIN=""
         echo
-        if read_yes_no "Использовать доменное имя?" "n"; then
-            USE_DOMAIN="yes"
-            read -p "Доменное имя: " DOMAIN_NAME
-            if host "$DOMAIN_NAME" > /dev/null 2>&1; then
-                DOMAIN_IP=$(host "$DOMAIN_NAME" | grep "has address" | awk '{print $4}' | head -n1)
-                print_success "Домен $DOMAIN_NAME указывает на $DOMAIN_IP"
-            else
-                print_warning "Не удалось разрешить домен $DOMAIN_NAME"
-            fi
-            # В прямом режиме домен маскировки = сервисный домен
-            TLS_DOMAIN="$DOMAIN_NAME"
+        if read_yes_no "Включить Random Padding (защита от DPI)?" "y"; then
+            USE_DD_PREFIX="yes"
+            DISPLAY_SECRET="dd$SECRET"
+            print_success "Random Padding включён (секрет: dd$SECRET)"
         else
-            USE_DOMAIN="no"
+            USE_DD_PREFIX="no"
+            DISPLAY_SECRET="$SECRET"
         fi
     fi
-    
+
     # Сохраняем конфигурацию
     cat > "$INSTALL_DIR/.env" << EOF
 # MTProxy Configuration
 # Generated: $(date)
-
-# Mode
-NGINX_MODE=$NGINX_MODE
 
 # User Secret
 SECRET=$SECRET
@@ -606,7 +525,7 @@ USE_DOMAIN=$USE_DOMAIN
 DOMAIN_NAME=${DOMAIN_NAME}
 TLS_DOMAIN=${TLS_DOMAIN}
 EOF
-    
+
     print_success "Конфигурация сохранена в $INSTALL_DIR/.env"
 }
 
@@ -628,12 +547,6 @@ create_systemd_service() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
-    # В режиме Nginx/relay: MTProxy должен слушать только на 127.0.0.1.
-    # Relay (Nginx stream) подключается с 127.0.0.1; прямой доступ из интернета должен быть исключён.
-    if [ "$NGINX_MODE" = "yes" ]; then
-        CMD="$CMD --address 127.0.0.1"
-    fi
-
     # Добавляем AD Tag если указан
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
@@ -644,11 +557,10 @@ create_systemd_service() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    # TLS-режим (fakeTLS): -D задаёт домен маскировки (чей TLS fingerprint имитировать).
-    # TLS_DOMAIN — внешний сайт (напр. www.google.com), НЕ сервисный домен.
-    # Это предотвращает циклическое подключение MTProxy к самому себе через Nginx.
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
-        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
+    # TLS-режим (fakeTLS): -D задаёт внешний домен маскировки (чей TLS fingerprint имитировать).
+    # TLS_DOMAIN — внешний сайт (напр. www.google.com), НЕ этот сервер.
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$TLS_DOMAIN" ]; then
+        CMD="$CMD -D $TLS_DOMAIN"
     fi
 
     # ВАЖНО: --aes-pwd и конфиг должны быть В КОНЦЕ и именно в таком порядке!
@@ -700,14 +612,12 @@ EOF
     systemctl daemon-reload
     print_success "Systemd перезагружен"
 
-    # Открываем порт в UFW (только для прямого подключения)
-    if [ "$NGINX_MODE" = "no" ]; then
-        if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
-            ufw allow "${EXTERNAL_PORT}/tcp" >/dev/null 2>&1
-            print_success "UFW: порт $EXTERNAL_PORT/tcp открыт"
-        else
-            print_info "UFW не активен. Откройте порт вручную: sudo ufw allow $EXTERNAL_PORT/tcp"
-        fi
+    # Открываем порт в UFW
+    if command -v ufw &>/dev/null && ufw status 2>/dev/null | grep -q "Status: active"; then
+        ufw allow "${EXTERNAL_PORT}/tcp" >/dev/null 2>&1
+        print_success "UFW: порт $EXTERNAL_PORT/tcp открыт"
+    else
+        print_info "UFW не активен. Откройте порт вручную: sudo ufw allow $EXTERNAL_PORT/tcp"
     fi
 }
 
@@ -766,65 +676,23 @@ EOF
 setup_management_scripts() {
     print_header "Настройка скриптов управления"
 
-    # Скрипты управления должны лежать рядом с install_official.sh.
-    # После клонирования репозитория Telegram в /opt/MTProxy копируем их туда,
-    # чтобы они были доступны вместе с бинарником и конфигурацией.
-    for script in manage_mtproxy_official.sh setup_remnawave_integration.sh; do
-        if [ -f "$SCRIPT_DIR/$script" ]; then
-            cp "$SCRIPT_DIR/$script" "$INSTALL_DIR/$script"
-            chmod +x "$INSTALL_DIR/$script"
-            print_success "Скрипт установлен: $INSTALL_DIR/$script"
-        else
-            print_warning "Скрипт не найден: $SCRIPT_DIR/$script"
-            print_info "Ожидался рядом с install_official.sh"
-        fi
-    done
+    # Скрипт управления должен лежать рядом с install_official.sh.
+    # После клонирования репозитория Telegram в /opt/MTProxy копируем его туда.
+    if [ -f "$SCRIPT_DIR/manage_mtproxy_official.sh" ]; then
+        cp "$SCRIPT_DIR/manage_mtproxy_official.sh" "$INSTALL_DIR/manage_mtproxy_official.sh"
+        chmod +x "$INSTALL_DIR/manage_mtproxy_official.sh"
+        print_success "Скрипт установлен: $INSTALL_DIR/manage_mtproxy_official.sh"
+    else
+        print_warning "Скрипт не найден: $SCRIPT_DIR/manage_mtproxy_official.sh"
+        print_info "Ожидался рядом с install_official.sh"
+    fi
 
     # Создаём симлинки /usr/local/bin/mtproxy и /usr/local/bin/MTProxy
-    # Позволяет запускать управление командами: mtproxy  и  MTProxy
     if [ -f "$INSTALL_DIR/manage_mtproxy_official.sh" ]; then
         ln -sf "$INSTALL_DIR/manage_mtproxy_official.sh" /usr/local/bin/mtproxy
         ln -sf "$INSTALL_DIR/manage_mtproxy_official.sh" /usr/local/bin/MTProxy
-        print_success "Симлинки созданы: mtproxy  и  MTProxy → $INSTALL_DIR/manage_mtproxy_official.sh"
-        print_info "Управление MTProxy доступно командами: mtproxy  или  MTProxy"
-    fi
-}
-
-################################################################################
-# Интеграция с Remnawave
-################################################################################
-
-integrate_with_remnawave() {
-    # В режиме прямого подключения Nginx/Remnawave не используются
-    if [ "$NGINX_MODE" = "no" ]; then
-        return
-    fi
-
-    print_header "Интеграция с Remnawave (опционально)"
-    
-    if [ ! -d "$REMNANODE_DIR" ]; then
-        print_warning "Remnawave не обнаружена в $REMNANODE_DIR"
-        print_info "Пропускаем интеграцию"
-        return
-    fi
-    
-    print_success "Remnawave обнаружена"
-    echo
-    
-    if ! read_yes_no "Настроить интеграцию с Remnawave (Nginx SNI)?" "n"; then
-        print_info "Интеграция пропущена"
-        return
-    fi
-    
-    # Запускаем отдельный скрипт интеграции
-    # Приоритет: /opt/MTProxy/ (куда setup_management_scripts скопировал скрипт)
-    if [ -f "$INSTALL_DIR/setup_remnawave_integration.sh" ]; then
-        bash "$INSTALL_DIR/setup_remnawave_integration.sh"
-    elif [ -f "$SCRIPT_DIR/setup_remnawave_integration.sh" ]; then
-        bash "$SCRIPT_DIR/setup_remnawave_integration.sh"
-    else
-        print_warning "Скрипт интеграции не найден"
-        print_info "Скопируйте setup_remnawave_integration.sh в $INSTALL_DIR/ и повторите"
+        print_success "Симлинки созданы: mtproxy и MTProxy → $INSTALL_DIR/manage_mtproxy_official.sh"
+        print_info "Управление MTProxy доступно командами: mtproxy или MTProxy"
     fi
 }
 
@@ -1000,7 +868,6 @@ main() {
     interactive_configuration
     create_systemd_service
     setup_config_updater
-    integrate_with_remnawave
     start_and_verify
     print_connection_info
     

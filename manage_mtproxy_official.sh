@@ -313,14 +313,7 @@ show_connection_info() {
         CLIENT_SECRET="$SECRET"
     fi
 
-    # Определяем порт для клиентской ссылки:
-    # - Nginx режим (NGINX_MODE=yes): клиенты подключаются через Nginx на порт 443
-    # - Иначе: прямое подключение к MTProxy на EXTERNAL_PORT
-    if [ "$NGINX_MODE" = "yes" ]; then
-        CLIENT_PORT=443
-    else
-        CLIENT_PORT="$EXTERNAL_PORT"
-    fi
+    CLIENT_PORT="$EXTERNAL_PORT"
 
     PROXY_LINK="tg://proxy?server=$SERVER_ADDR&port=$CLIENT_PORT&secret=$CLIENT_SECRET"
 
@@ -389,11 +382,11 @@ change_secret() {
     esac
     
     echo
-    if [ "${NGINX_MODE:-no}" = "yes" ]; then
-        # fakeTLS режим (-D domain): dd-префикс несовместим с TLS-хэндшейком
-        DISPLAY_SECRET="$NEW_SECRET"
+    if [ "${USE_DOMAIN:-no}" = "yes" ]; then
+        # TLS режим (ee prefix): dd-префикс несовместим с TLS-хэндшейком
+        DISPLAY_SECRET="ee$NEW_SECRET"
         USE_DD_PREFIX="no"
-        print_info "Random Padding отключён (несовместим с fakeTLS/Nginx-режимом)"
+        print_info "Random Padding отключён (несовместим с TLS-режимом)"
     else
         read -p "Включить Random Padding (dd префикс)? [Y/n]: " -n 1 -r
         echo
@@ -430,10 +423,6 @@ change_secret() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
-    if [ "${NGINX_MODE:-no}" = "yes" ]; then
-        CMD="$CMD --address 127.0.0.1"
-    fi
-
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
@@ -443,10 +432,9 @@ change_secret() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    # TLS-режим для SNI-роутинга через Nginx
-    # TLS_DOMAIN — домен маскировки (внешний сайт), НЕ сервисный домен
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
-        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
+    # TLS-режим для fakeTLS-маскировки
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$TLS_DOMAIN" ]; then
+        CMD="$CMD -D $TLS_DOMAIN"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -515,10 +503,6 @@ change_ad_tag() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
-    if [ "${NGINX_MODE:-no}" = "yes" ]; then
-        CMD="$CMD --address 127.0.0.1"
-    fi
-
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
@@ -527,8 +511,8 @@ change_ad_tag() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
-        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$TLS_DOMAIN" ]; then
+        CMD="$CMD -D $TLS_DOMAIN"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -578,8 +562,8 @@ change_ports() {
     
     print_success "Порты обновлены"
 
-    # UFW: обновляем правила (только для прямого подключения)
-    if [ "${NGINX_MODE:-no}" = "no" ] && [ "$NEW_EXTERNAL_PORT" != "$OLD_EXTERNAL_PORT" ]; then
+    # UFW: обновляем правила
+    if [ "$NEW_EXTERNAL_PORT" != "$OLD_EXTERNAL_PORT" ]; then
         close_ufw_port "$OLD_EXTERNAL_PORT"
         open_ufw_port "$NEW_EXTERNAL_PORT"
     fi
@@ -588,17 +572,13 @@ change_ports() {
     print_info "Обновление systemd сервиса..."
 
     source "$CONFIG_FILE"
-    
+
     CMD="/opt/MTProxy/objs/bin/mtproto-proxy"
     CMD="$CMD -u nobody"
     CMD="$CMD -p $STATS_PORT"
     CMD="$CMD -H $EXTERNAL_PORT"
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
-
-    if [ "${NGINX_MODE:-no}" = "yes" ]; then
-        CMD="$CMD --address 127.0.0.1"
-    fi
 
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
@@ -608,8 +588,8 @@ change_ports() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
-        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$TLS_DOMAIN" ]; then
+        CMD="$CMD -D $TLS_DOMAIN"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -663,10 +643,6 @@ change_workers() {
     CMD="$CMD -S $SECRET"
     CMD="$CMD -M $WORKERS"
 
-    if [ "${NGINX_MODE:-no}" = "yes" ]; then
-        CMD="$CMD --address 127.0.0.1"
-    fi
-
     if [ -n "$AD_TAG" ] && [ "$AD_TAG" != "пропустить" ]; then
         CMD="$CMD -P $AD_TAG"
     fi
@@ -675,8 +651,8 @@ change_workers() {
         CMD="$CMD --nat-info $NAT_LOCAL_IP:$NAT_IP"
     fi
 
-    if [ "$USE_DOMAIN" = "yes" ] && [ -n "${TLS_DOMAIN:-$DOMAIN_NAME}" ]; then
-        CMD="$CMD -D ${TLS_DOMAIN:-$DOMAIN_NAME}"
+    if [ "$USE_DOMAIN" = "yes" ] && [ -n "$TLS_DOMAIN" ]; then
+        CMD="$CMD -D $TLS_DOMAIN"
     fi
 
     CMD="$CMD --aes-pwd /opt/MTProxy/run/proxy-secret /opt/MTProxy/run/proxy-multi.conf"
@@ -783,17 +759,25 @@ uninstall() {
         print_success "Cron задача удалена"
     fi
     
-    # Удаляем симлинк
-    if [ -L /usr/local/bin/mtproxy ]; then
-        print_info "Удаление симлинка /usr/local/bin/mtproxy..."
-        rm -f /usr/local/bin/mtproxy
-        print_success "Симлинк удален"
+    # Удаляем симлинки
+    for symlink in /usr/local/bin/mtproxy /usr/local/bin/MTProxy; do
+        if [ -L "$symlink" ]; then
+            print_info "Удаление симлинка $symlink..."
+            rm -f "$symlink"
+            print_success "Симлинк $symlink удален"
+        fi
+    done
+
+    # Удаляем sysctl настройку
+    if [ -f /etc/sysctl.d/99-mtproxy-pid.conf ]; then
+        rm -f /etc/sysctl.d/99-mtproxy-pid.conf
+        print_success "Удалён файл sysctl: /etc/sysctl.d/99-mtproxy-pid.conf"
     fi
 
-    # Закрываем порт в UFW (только для прямого подключения)
+    # Закрываем порт в UFW
     if [ -f "$CONFIG_FILE" ]; then
         source "$CONFIG_FILE" 2>/dev/null
-        if [ "${NGINX_MODE:-no}" = "no" ] && [ -n "$EXTERNAL_PORT" ]; then
+        if [ -n "$EXTERNAL_PORT" ]; then
             close_ufw_port "$EXTERNAL_PORT"
         fi
     fi
@@ -807,30 +791,6 @@ uninstall() {
     
     echo
     print_success "MTProxy полностью удален"
-}
-
-################################################################################
-# Интеграция с Remnawave
-################################################################################
-
-run_remnawave_integration() {
-    print_header "Интеграция с Remnawave (Nginx SNI)"
-
-    local INTEGRATION_SCRIPT="$INSTALL_DIR/setup_remnawave_integration.sh"
-
-    if [ ! -f "$INTEGRATION_SCRIPT" ]; then
-        print_error "Скрипт интеграции не найден: $INTEGRATION_SCRIPT"
-        print_info "Скопируйте setup_remnawave_integration.sh в $INSTALL_DIR/ и повторите"
-        return 1
-    fi
-
-    if [ "$EUID" -ne 0 ]; then
-        print_error "Интеграция требует прав root"
-        print_info "Запустите: sudo mtproxy  или  sudo bash $INTEGRATION_SCRIPT"
-        return 1
-    fi
-
-    bash "$INTEGRATION_SCRIPT"
 }
 
 ################################################################################
@@ -913,16 +873,11 @@ show_menu() {
         echo " 11) Пересобрать MTProxy"
         echo " 12) Удалить MTProxy"
         echo
-        echo "═══════════════════════════════════════════════════════════"
-        echo " ИНТЕГРАЦИЯ"
-        echo "═══════════════════════════════════════════════════════════"
-        echo " 13) Настроить интеграцию с Remnawave (Nginx SNI)"
-        echo
         echo "  0) Выход"
         echo
         echo "═══════════════════════════════════════════════════════════"
         read -p "Выберите действие: " choice
-        
+
         case $choice in
             1) start_service ;;
             2) stop_service ;;
@@ -936,7 +891,6 @@ show_menu() {
             10) update_telegram_config ;;
             11) rebuild_binary ;;
             12) uninstall; break ;;
-            13) run_remnawave_integration ;;
             0) break ;;
             *) print_error "Неверный выбор" ;;
         esac
@@ -1008,9 +962,6 @@ else
         rebuild)
             rebuild_binary
             ;;
-        setup-remnawave)
-            run_remnawave_integration
-            ;;
         uninstall)
             uninstall
             ;;
@@ -1034,7 +985,6 @@ else
             echo "  change-ports     - Изменить порты"
             echo "  change-workers   - Изменить количество воркеров"
             echo "  rebuild          - Пересобрать MTProxy"
-            echo "  setup-remnawave  - Настроить интеграцию с Remnawave (Nginx SNI)"
             echo "  uninstall        - Удалить MTProxy"
             echo "  help             - Показать эту справку"
             echo

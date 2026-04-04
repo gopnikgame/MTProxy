@@ -101,9 +101,10 @@ interactive_configuration() {
     echo
     echo -e "  ${YELLOW}► Порт для подключения клиентов${NC}"
     echo    "  Рекомендуется: 443 (стандартный HTTPS, меньше блокировок)"
+    _show_port_recommendations
     echo
 
-    local default_ext="${EXTERNAL_PORT:-443}"
+    local default_ext="${EXTERNAL_PORT:-${SUGGESTED_PORT:-443}}"
     while true; do
         read -p "Порт MTProxy [$default_ext]: " input
         EXTERNAL_PORT="${input:-$default_ext}"

@@ -164,6 +164,8 @@ change_ports() {
     local old_ext="$EXTERNAL_PORT"
     local new_ext new_stats
 
+    _show_port_recommendations
+    echo
     while true; do
         read -p "Новый внешний порт [$EXTERNAL_PORT]: " new_ext
         new_ext="${new_ext:-$EXTERNAL_PORT}"

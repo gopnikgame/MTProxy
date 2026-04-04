@@ -113,6 +113,29 @@ get_external_ip() {
         || echo ""
 }
 
+# Выводит список рекомендованных портов (свободные / занятые).
+# После вызова $SUGGESTED_PORT содержит первый свободный из списка
+# или пустую строку если все заняты.
+_show_port_recommendations() {
+    local candidates=(443 8443 2053 2083 2087 2096 9443)
+    local free=() busy=()
+    SUGGESTED_PORT=""
+    for p in "${candidates[@]}"; do
+        if is_port_available "$p"; then
+            free+=("$p")
+            [ -z "$SUGGESTED_PORT" ] && SUGGESTED_PORT="$p"
+        else
+            busy+=("$p")
+        fi
+    done
+    if [ ${#free[@]} -gt 0 ]; then
+        echo -e "  Свободные порты: ${GREEN}${free[*]}${NC}"
+    fi
+    if [ ${#busy[@]} -gt 0 ]; then
+        echo -e "  Занятые порты:   ${RED}${busy[*]}${NC}"
+    fi
+}
+
 ################################################################################
 # Проверки окружения
 ################################################################################

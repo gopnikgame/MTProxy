@@ -197,11 +197,17 @@ interactive_configuration() {
             print_warning "Не удалось разрешить $DOMAIN_NAME"
         fi
 
-        # Выбор TLS_DOMAIN (домен маскировки для флага -D)
-        # Предлагаем DOMAIN_NAME первым — он уже на этом сервере с TLS
+        # Выбор TLS_DOMAIN (домен маскировки для флага -D).
+        # Передаём DOMAIN_NAME как предпочтительный только если он был обнаружен
+        # автоматически (nginx/caddy) — значит на нём точно есть TLS.
+        # Вручную введённый домен не обязательно имеет TLS на этом сервере.
+        local _tls_preferred=""
+        for _d in "${SNI_DETECTED_DOMAINS[@]}"; do
+            [[ "$_d" == "$DOMAIN_NAME" ]] && _tls_preferred="$DOMAIN_NAME" && break
+        done
         echo
         echo -e "  ${YELLOW}► Домен маскировки TLS:${NC}"
-        select_tls_domain "${TLS_DOMAIN:-}" "$DOMAIN_NAME"
+        select_tls_domain "${TLS_DOMAIN:-}" "$_tls_preferred"
         # TLS_DOMAIN установлен функцией
 
         USE_DD_PREFIX="no"

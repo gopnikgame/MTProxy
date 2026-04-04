@@ -93,6 +93,8 @@ detect_sni_domains() {
         local d="${1//[[:space:]]/}"
         [[ -z "$d" ]] && return
         [[ ! "$d" =~ $_SNI_DOMAIN_RE ]] && return
+        # Отбрасываем строки с файловыми расширениями (не являются доменами)
+        [[ "$d" =~ \.(conf|ini|yaml|yml|sh|txt|json|toml|xml|log|cfg|env|bak)$ ]] && return
         for s in "${_seen[@]}"; do [[ "$s" == "$d" ]] && return; done
         _seen+=("$d")
         SNI_DETECTED_DOMAINS+=("$d")

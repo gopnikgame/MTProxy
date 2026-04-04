@@ -129,11 +129,7 @@ _docker_install_engine() {
 _docker_create_compose() {
     local port="$1" secret="$2" workers="$3" tag="$4"
 
-    # Определяем внутренний IP хоста, чтобы передать его в контейнер.
-    # Официальный образ telegrammessenger/proxy использует ip(8) внутри
-    # run.sh для auto-detect, но в ряде образов iproute2 отсутствует.
-    # INTERNAL_IP передаётся через окружение; entrypoint.sh дополнительно
-    # создаёт эмулятор ip(8), если команда недоступна в контейнере.
+    # Определяем внутренний IP хоста для передачи в контейнер.
     local internal_ip
     internal_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
     [ -z "$internal_ip" ] && internal_ip=$(ip -4 addr 2>/dev/null \
@@ -143,23 +139,19 @@ _docker_create_compose() {
 
     mkdir -p "$DOCKER_DIR"
 
-    # Обёртка-точка входа: если ip(8) недоступен в контейнере,
-    # создаёт минимальный его эмулятор на основе INTERNAL_IP из окружения.
-    cat > "$DOCKER_DIR/entrypoint.sh" << 'ENTRYEOF'
-#!/bin/sh
-if ! command -v ip > /dev/null 2>&1; then
-    echo '#!/bin/sh' > /usr/local/bin/ip
-    echo 'echo "1.1.1.1 dev eth0 src ${INTERNAL_IP:-127.0.0.1} uid 0"' >> /usr/local/bin/ip
-    chmod +x /usr/local/bin/ip
-fi
-exec /run.sh "$@"
-ENTRYEOF
-    chmod +x "$DOCKER_DIR/entrypoint.sh"
+    # Dockerfile: добавляем iproute2, которого нет в официальном образе.
+    # run.sh требует ip(8) для определения внутреннего IP.
+    cat > "$DOCKER_DIR/Dockerfile" << EOF
+FROM ${DOCKER_IMAGE}:${tag}
+RUN apk add --no-cache iproute2
+EOF
 
     cat > "$DOCKER_COMPOSE_FILE" << EOF
 services:
   mtproto-proxy:
-    image: ${DOCKER_IMAGE}:${tag}
+    build:
+      context: ${DOCKER_DIR}
+    image: mtproto-proxy-local
     container_name: ${DOCKER_CONTAINER}
     restart: unless-stopped
     ports:
@@ -169,10 +161,8 @@ services:
       - WORKERS=${workers}
       - INTERNAL_IP=${internal_ip}
     volumes:
-      - ${DOCKER_DIR}/entrypoint.sh:/entrypoint.sh:ro
       - proxy-data:/data
       - /etc/localtime:/etc/localtime:ro
-    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     logging:
       driver: "json-file"
       options:
@@ -187,6 +177,8 @@ EOF
     print_success "docker-compose.yml создан: $DOCKER_COMPOSE_FILE"
 
     cd "$DOCKER_DIR"
+    print_info "Сборка образа (добавление iproute2)..."
+    docker compose build
     docker compose up -d
     print_success "Контейнер запущен"
 
@@ -356,7 +348,7 @@ show_docker_info() {
     echo -e "${CYAN}📋 КОНФИГУРАЦИЯ:${NC}"
     echo "   Сервер:  $server_addr"
     echo "   Порт:    $port"
-    echo "   Образ:   $(grep -oP "(?<=${DOCKER_IMAGE}:)\S+" "$DOCKER_COMPOSE_FILE" | head -1)"
+    echo "   Образ:   ${DOCKER_IMAGE}:$(grep -oP "(?<=FROM ${DOCKER_IMAGE}:)\S+" "$DOCKER_DIR/Dockerfile" 2>/dev/null | head -1)"
     echo
     echo -e "${CYAN}🔗 ССЫЛКА ДЛЯ ПОДКЛЮЧЕНИЯ:${NC}"
     echo "═══════════════════════════════════════════════════════════"
@@ -488,15 +480,15 @@ docker_change_port() {
 docker_change_image_tag() {
     print_header "Обновление версии образа (Docker)"
 
-    local current_tag; current_tag=$(grep -oP "(?<=${DOCKER_IMAGE}:)\S+" "$DOCKER_COMPOSE_FILE" | head -1)
+    local current_tag; current_tag=$(grep -oP "(?<=FROM ${DOCKER_IMAGE}:)\S+" "$DOCKER_DIR/Dockerfile" 2>/dev/null | head -1)
     echo "Текущая версия: $current_tag"
     echo
 
     _docker_select_image_tag
-    sed -i "s|image: ${DOCKER_IMAGE}:.*|image: ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}|" "$DOCKER_COMPOSE_FILE"
+    sed -i "s|FROM ${DOCKER_IMAGE}:.*|FROM ${DOCKER_IMAGE}:${DOCKER_IMAGE_TAG}|" "$DOCKER_DIR/Dockerfile"
 
-    print_info "Загрузка нового образа..."
-    cd "$DOCKER_DIR" && docker compose pull
+    print_info "Загрузка и пересборка образа..."
+    cd "$DOCKER_DIR" && docker compose build --pull
     _docker_restart
 
     print_success "Образ обновлён: $current_tag → $DOCKER_IMAGE_TAG"

@@ -42,7 +42,7 @@ print_success "Симлинки: /usr/local/bin/mtproxy → $INSTALL_DIR/manage_
 
 echo
 echo "═══════════════════════════════════════════════════════════"
-if [ -f "$MTPROXY_BINARY" ]; then
+if [ -f "$MTPROXY_BINARY" ] && [ -f "$CONFIG_FILE" ]; then
     echo -e "${GREEN}  MTProxy уже установлен. Управление:${NC}"
     echo
     echo "    sudo mtproxy          # интерактивное меню"

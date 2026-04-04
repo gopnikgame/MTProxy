@@ -142,17 +142,19 @@ check_ubuntu() {
 # Проверяет, что MTProxy установлен и systemd-сервис существует.
 # При ошибке завершает скрипт с exit 1.
 check_installation() {
-    if [ ! -d "$INSTALL_DIR" ]; then
+    if [ ! -d "$INSTALL_DIR" ] || [ ! -f "$MTPROXY_BINARY" ]; then
         print_error "MTProxy не установлен"
-        print_info "Запустите установку: sudo bash install_official.sh"
+        print_info "Выполните установку: sudo mtproxy install"
         exit 1
     fi
     if [ ! -f "$CONFIG_FILE" ]; then
         print_error "Файл конфигурации не найден: $CONFIG_FILE"
+        print_info "Переустановите: sudo mtproxy install"
         exit 1
     fi
     if ! systemctl list-unit-files 2>/dev/null | grep -q "^${SERVICE_NAME}.service"; then
         print_error "Systemd сервис не найден"
+        print_info "Переустановите: sudo mtproxy install"
         exit 1
     fi
 }

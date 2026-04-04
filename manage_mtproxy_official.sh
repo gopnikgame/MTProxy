@@ -7,6 +7,15 @@
 MANAGER_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 MODULES_DIR="$MANAGER_DIR/modules"
 
+# Все команды (кроме help) требуют root
+if [ "$EUID" -ne 0 ]; then
+    _cmd="${1:-}"
+    if [[ "$_cmd" != "help" && "$_cmd" != "--help" && "$_cmd" != "-h" ]]; then
+        echo "MTProxy Manager требует права root. Запустите: sudo mtproxy ${*}"
+        exit 1
+    fi
+fi
+
 # Загружаем все модули в порядке зависимостей
 for _mod in lib_common lib_sni lib_config lib_install lib_service lib_manage; do
     # shellcheck source=/dev/null

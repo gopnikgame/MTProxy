@@ -42,16 +42,32 @@ print_success "Симлинки: /usr/local/bin/mtproxy → $INSTALL_DIR/manage_
 
 echo
 echo "═══════════════════════════════════════════════════════════"
-if [ -f "$MTPROXY_BINARY" ] && [ -f "$CONFIG_FILE" ]; then
-    echo -e "${GREEN}  MTProxy уже установлен. Управление:${NC}"
+_has_binary=false; _has_docker=false
+[ -f "$MTPROXY_BINARY" ] && [ -f "$CONFIG_FILE" ] && _has_binary=true
+[ -f "/opt/mtproto-proxy/docker-compose.yml" ] && _has_docker=true
+
+if $_has_binary && $_has_docker; then
+    echo -e "${GREEN}  Binary и Docker MTProxy установлены. Управление:${NC}"
+    echo
+    echo "    sudo mtproxy          # выбор варианта (интерактивное меню)"
+    echo "    sudo mtproxy info     # ссылка для подключения"
+    echo "    sudo mtproxy status   # статус"
+elif $_has_binary; then
+    echo -e "${GREEN}  MTProxy Binary установлен. Управление:${NC}"
     echo
     echo "    sudo mtproxy          # интерактивное меню"
     echo "    sudo mtproxy info     # ссылка для подключения"
     echo "    sudo mtproxy status   # статус сервиса"
-else
-    echo -e "${CYAN}  Скрипты готовы. Для установки MTProxy выполните:${NC}"
+elif $_has_docker; then
+    echo -e "${GREEN}  MTProxy Docker установлен. Управление:${NC}"
     echo
-    echo "    sudo mtproxy install"
+    echo "    sudo mtproxy          # интерактивное меню"
+    echo "    sudo mtproxy info     # ссылка для подключения"
+    echo "    sudo mtproxy status   # статус контейнера"
+else
+    echo -e "${CYAN}  Скрипты готовы. Для установки выполните:${NC}"
+    echo
+    echo "    sudo mtproxy          # мастер установки: Binary или Docker"
 fi
 echo "═══════════════════════════════════════════════════════════"
 echo

@@ -4,8 +4,9 @@
 [![Ubuntu](https://img.shields.io/badge/Ubuntu-20.04%2B-orange?logo=ubuntu)](https://ubuntu.com/)
 [![License](https://img.shields.io/badge/License-GPL%20v2-green.svg)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html)
 
-Автоматическая установка **официального MTProto прокси от Telegram** (C-реализация) на Ubuntu.  
-Управление реализовано через **модульную bash-систему** — каждый файл отвечает за одну зону ответственности.
+Автоматическая установка **официального MTProto прокси от Telegram** на Ubuntu.  
+Поддерживает два варианта: **C-бинарник** (компиляция из исходников) и **Docker-контейнер** (zero-configuration).  
+Управление через **модульную bash-систему** — каждый файл отвечает за одну зону ответственности.
 
 ---
 
@@ -17,13 +18,11 @@ cd MTProxy
 sudo bash install_official.sh
 ```
 
-`install_official.sh` — тонкий загрузчик (~25 строк): проверяет окружение и делегирует всю логику модульной системе.
-
-После установки доступна глобальная команда:
+`install_official.sh` копирует модули в `/opt/MTProxy/` и создаёт симлинк `mtproxy`. После запуска предложит выбрать вариант установки:
 
 ```bash
-mtproxy          # интерактивное меню
-mtproxy help     # список всех команд
+sudo mtproxy          # мастер: выбор Binary (C-бинарник) или Docker-контейнер
+mtproxy help          # список всех команд
 ```
 
 > Все операции управления требуют `sudo`.
@@ -39,19 +38,18 @@ mtproxy help     # список всех команд
 | 🌐 **SNI-маскировка** | Автоопределение доменов nginx / Caddy / remnanode для `-D` |
 | 🛠 **Удобство** | Интерактивное меню, автообновление конфигов Telegram, симлинк `mtproxy` |
 | 💰 **Монетизация** | AD Tag через [@MTProxybot](https://t.me/MTProxybot) |
+| 🐳 **Docker-режим** | Zero-configuration контейнер `telegrammessenger/proxy`, авторестарт в 4:00 |
 
 ---
 
 ## 🛠 Управление
 
 ```bash
-# Установка / переустановка
+# Установка (мастер: выбор Binary или Docker)
 sudo mtproxy install
+sudo mtproxy          # то же при первом запуске
 
-# Интерактивное меню
-sudo mtproxy
-
-# Управление сервисом
+# Управление сервисом / контейнером
 sudo mtproxy start / stop / restart / status
 
 # Информация
@@ -60,16 +58,16 @@ sudo mtproxy stats            # Статистика прокси
 sudo mtproxy logs             # Последние 50 строк логов
 sudo mtproxy follow-logs      # Логи в реальном времени
 
-# Настройка
+# Настройка (Binary и Docker)
 sudo mtproxy change-secret
 sudo mtproxy change-ad-tag
 sudo mtproxy change-ports
 sudo mtproxy change-workers
-sudo mtproxy update-config    # Обновить конфиги Telegram
-
-# Обслуживание
-sudo mtproxy rebuild          # Пересборка из исходников
 sudo mtproxy uninstall        # Полное удаление
+
+# Только для Binary-режима
+sudo mtproxy update-config    # Обновить конфиги Telegram
+sudo mtproxy rebuild          # Пересборка из исходников
 ```
 
 ---
@@ -97,15 +95,16 @@ tg://proxy?server=1.2.3.4&port=443&secret=dd<32hex>
 
 ```
 MTProxy/                            ← репозиторий (git clone)
-├── install_official.sh             # Загрузчик установки (~25 строк)
-├── manage_mtproxy_official.sh      # Диспетчер управления (~170 строк)
+├── install_official.sh             # Загрузчик: копирует модули, создаёт симлинк
+├── manage_mtproxy_official.sh      # Диспетчер управления
 └── modules/
     ├── lib_common.sh               # Константы, утилиты, build_cmd()
     ├── lib_sni.sh                  # Детектор SNI-доменов (nginx/Caddy/remnanode)
     ├── lib_config.sh               # Мастер настройки + show_connection_info()
-    ├── lib_install.sh              # Полный пайплайн установки
+    ├── lib_install.sh              # Полный пайплайн установки Binary
     ├── lib_service.sh              # Управление сервисом (start/stop/logs/stats)
-    └── lib_manage.sh               # Изменение параметров, rebuild, uninstall
+    ├── lib_manage.sh               # Изменение параметров, rebuild, uninstall
+    └── lib_docker.sh               # Docker-контейнер: установка, управление, конфигурация
 ```
 
 После установки все файлы копируются в `/opt/MTProxy/`:
@@ -128,6 +127,11 @@ MTProxy/                            ← репозиторий (git clone)
 /usr/local/bin/MTProxy              # Симлинк → /opt/MTProxy/manage_mtproxy_official.sh
 /etc/systemd/system/mtproxy.service
 /etc/sysctl.d/99-mtproxy-pid.conf   # kernel.pid_max=65535 (воркараунд MTProxy C-ассерта)
+
+# При установке Docker-варианта:
+/opt/mtproto-proxy/
+├── docker-compose.yml              # Конфигурация контейнера (SECRET, WORKERS, INTERNAL_IP)
+└── proxy_link.txt                  # Ссылка для подключения
 ```
 
 ---
@@ -135,25 +139,34 @@ MTProxy/                            ← репозиторий (git clone)
 ## 🏗 Модульная архитектура
 
 ```
-install_official.sh
+# ── Binary ──────────────────────────────────────────────────────
+install_official.sh → sudo mtproxy install
   └─► run_install()                  [lib_install.sh]
         ├─ install_dependencies()
         ├─ clone_and_build_mtproxy()
-        ├─ copy_modules()
-        ├─ download_telegram_configs()
         ├─ interactive_configuration() [lib_config.sh]
         │     └─ detect_sni_domains()  [lib_sni.sh]
         │        select_tls_domain()   [lib_sni.sh]
         ├─ create_systemd_service()
         │     └─ build_cmd()          [lib_common.sh]
-        ├─ setup_config_updater()
+        ├─ setup_config_updater()     cron 3:00
         └─ start_and_verify()
 
+# ── Docker ──────────────────────────────────────────────────────
+install_official.sh → sudo mtproxy install
+  └─► run_docker_install()           [lib_docker.sh]
+        ├─ _docker_install_engine()   Docker Engine (если не установлен)
+        ├─ _docker_select_image_tag() выбор версии образа
+        ├─ _docker_create_compose()   docker-compose.yml + INTERNAL_IP
+        └─ open_ufw_port()            UFW правило
+
+# ── Диспетчер ───────────────────────────────────────────────────
 manage_mtproxy_official.sh
-  ├─ sources: lib_common + lib_sni + lib_config +
-  │           lib_install + lib_service + lib_manage
-  ├─ show_menu()                     интерактивное меню
-  └─ CLI dispatch                    mtproxy <команда>
+  ├─ sources: все 7 lib_*.sh модулей
+  ├─ _detect_install_type()          binary / docker / both / none
+  ├─ show_menu()                     Binary интерактивное меню
+  ├─ show_docker_menu()              Docker интерактивное меню
+  └─ CLI dispatch                    mtproxy <команда> (авторутинг)
 ```
 
 Ключевые функции `lib_common.sh`, используемые всеми модулями:
@@ -206,4 +219,5 @@ sudo mtproxy rebuild
 
 - **Ubuntu 20.04+** (рекомендуется 22.04 LTS)
 - Открытый входящий порт (рекомендуется **443 TCP**)
-- Зависимости устанавливаются автоматически: `git` `curl` `build-essential` `libssl-dev` `zlib1g-dev` `xxd`
+- **Binary:** зависимости устанавливаются автоматически: `git` `curl` `build-essential` `libssl-dev` `zlib1g-dev` `xxd`
+- **Docker:** Docker Engine ≥ 20.10 с плагином `compose` — устанавливается автоматически при выборе Docker-режима

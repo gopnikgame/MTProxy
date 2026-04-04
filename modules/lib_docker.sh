@@ -132,13 +132,30 @@ _docker_create_compose() {
     # Определяем внутренний IP хоста, чтобы передать его в контейнер.
     # Официальный образ telegrammessenger/proxy использует ip(8) внутри
     # run.sh для auto-detect, но в ряде образов iproute2 отсутствует.
-    # Явная переменная INTERNAL_IP полностью обходит эту проблему.
+    # INTERNAL_IP передаётся через окружение; entrypoint.sh дополнительно
+    # создаёт эмулятор ip(8), если команда недоступна в контейнере.
     local internal_ip
     internal_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    [ -z "$internal_ip" ] && internal_ip=$(ip -4 addr 2>/dev/null \
+        | awk '/inet / {gsub(/\/.*/, "", $2); if ($2 != "127.0.0.1") {print $2; exit}}')
     [ -z "$internal_ip" ] && internal_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
     [ -z "$internal_ip" ] && internal_ip="0.0.0.0"
 
     mkdir -p "$DOCKER_DIR"
+
+    # Обёртка-точка входа: если ip(8) недоступен в контейнере,
+    # создаёт минимальный его эмулятор на основе INTERNAL_IP из окружения.
+    cat > "$DOCKER_DIR/entrypoint.sh" << 'ENTRYEOF'
+#!/bin/sh
+if ! command -v ip > /dev/null 2>&1; then
+    echo '#!/bin/sh' > /usr/local/bin/ip
+    echo 'echo "1.1.1.1 dev eth0 src ${INTERNAL_IP:-127.0.0.1} uid 0"' >> /usr/local/bin/ip
+    chmod +x /usr/local/bin/ip
+fi
+exec /run.sh "$@"
+ENTRYEOF
+    chmod +x "$DOCKER_DIR/entrypoint.sh"
+
     cat > "$DOCKER_COMPOSE_FILE" << EOF
 services:
   mtproto-proxy:
@@ -152,8 +169,10 @@ services:
       - WORKERS=${workers}
       - INTERNAL_IP=${internal_ip}
     volumes:
+      - ${DOCKER_DIR}/entrypoint.sh:/entrypoint.sh:ro
       - proxy-data:/data
       - /etc/localtime:/etc/localtime:ro
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
     logging:
       driver: "json-file"
       options:

@@ -141,9 +141,14 @@ _docker_create_compose() {
 
     # Dockerfile: добавляем iproute2, которого нет в официальном образе.
     # run.sh требует ip(8) для определения внутреннего IP.
+    # Поддерживаем оба пакетных менеджера: apt-get (Debian) и apk (Alpine).
     cat > "$DOCKER_DIR/Dockerfile" << EOF
 FROM ${DOCKER_IMAGE}:${tag}
-RUN apk add --no-cache iproute2
+RUN if command -v apt-get > /dev/null 2>&1; then \
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends iproute2 && rm -rf /var/lib/apt/lists/*; \
+    elif command -v apk > /dev/null 2>&1; then \
+        apk add --no-cache iproute2; \
+    fi
 EOF
 
     cat > "$DOCKER_COMPOSE_FILE" << EOF

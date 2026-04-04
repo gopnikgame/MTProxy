@@ -313,6 +313,9 @@ UPDATER
     chmod +x "$INSTALL_DIR/update-configs.sh"
     print_success "Скрипт обновления создан"
 
+    # Обновляет proxy-secret и proxy-multi.conf и перезапускает сервис.
+    # Раз в сутки — рекомендация Telegram для получения свежих
+    # IP-адресов ядра Telegram (из proxy-multi.conf).
     local cron_cmd="0 3 * * * $INSTALL_DIR/update-configs.sh >/dev/null 2>&1"
     if crontab -l 2>/dev/null | grep -q "update-configs.sh"; then
         print_info "Cron задача уже существует"

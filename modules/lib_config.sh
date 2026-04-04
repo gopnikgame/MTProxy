@@ -52,10 +52,18 @@ show_connection_info() {
     echo "$proxy_link"
     echo "═══════════════════════════════════════════════════════════"
     echo
+    echo -e "${YELLOW}🤖 РЕГИСТРАЦИЯ В @MTProxybot:${NC}"
+    echo "   Секрет для бота: $SECRET"
+    print_info "Голый секрет (без ee/dd-префикса) — используйте при регистрации в @MTProxybot"
+    echo
 
-    if [ -f "$INSTALL_DIR/proxy_link.txt" ]; then
-        print_info "Ссылка сохранена: $INSTALL_DIR/proxy_link.txt"
-    fi
+    # Сохраняем ссылку и данные для бота
+    {
+        echo "$proxy_link"
+        echo ""
+        echo "Секрет для @MTProxybot: $SECRET"
+    } > "$INSTALL_DIR/proxy_link.txt"
+    print_info "Данные сохранены: $INSTALL_DIR/proxy_link.txt"
 }
 
 ################################################################################

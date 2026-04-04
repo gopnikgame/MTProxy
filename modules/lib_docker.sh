@@ -129,6 +129,15 @@ _docker_install_engine() {
 _docker_create_compose() {
     local port="$1" secret="$2" workers="$3" tag="$4"
 
+    # Определяем внутренний IP хоста, чтобы передать его в контейнер.
+    # Официальный образ telegrammessenger/proxy использует ip(8) внутри
+    # run.sh для auto-detect, но в ряде образов iproute2 отсутствует.
+    # Явная переменная INTERNAL_IP полностью обходит эту проблему.
+    local internal_ip
+    internal_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -1)
+    [ -z "$internal_ip" ] && internal_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    [ -z "$internal_ip" ] && internal_ip="0.0.0.0"
+
     mkdir -p "$DOCKER_DIR"
     cat > "$DOCKER_COMPOSE_FILE" << EOF
 services:
@@ -141,6 +150,7 @@ services:
     environment:
       - SECRET=${secret}
       - WORKERS=${workers}
+      - INTERNAL_IP=${internal_ip}
     volumes:
       - proxy-data:/data
       - /etc/localtime:/etc/localtime:ro

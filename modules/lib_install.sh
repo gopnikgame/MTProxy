@@ -403,6 +403,10 @@ print_connection_info() {
     echo "$proxy_link"
     echo "═══════════════════════════════════════════════════════════"
     echo
+    echo -e "${YELLOW}🤖 РЕГИСТРАЦИЯ В @MTProxybot:${NC}"
+    echo "   Секрет для бота: $SECRET"
+    print_info "Голый секрет (без ee/dd-префикса) — используйте при регистрации в @MTProxybot"
+    echo
     echo -e "${CYAN}📱 ИНСТРУКЦИЯ:${NC}"
     echo "   1. Откройте ссылку на устройстве с Telegram"
     echo "   2. Нажмите 'Connect Proxy'"
@@ -428,12 +432,12 @@ MTProxy Connection Link
 
 Server:  $SERVER_ADDR
 Port:    $EXTERNAL_PORT
-Secret:  $CLIENT_SECRET
 
 Connection Link:
 $proxy_link
 
 ═══════════════════════════════════════════════════════════
+Секрет для @MTProxybot: $SECRET
 Generated: $(date)
 EOF
 

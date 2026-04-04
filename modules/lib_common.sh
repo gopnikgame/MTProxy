@@ -230,10 +230,18 @@ apply_cmd_to_service() {
 
 # Вычисляет клиентский секрет (с ee/dd-префиксом) на основе конфигурации.
 # Результат записывается в переменную CLIENT_SECRET.
-# Требует: $SECRET, $USE_DOMAIN, $DOMAIN_NAME, $USE_DD_PREFIX — загружены из .env
+# Требует: $SECRET, $USE_DOMAIN, $TLS_DOMAIN, $USE_DD_PREFIX — загружены из .env
+#
+# Форматы секрета:
+#   plain:    <32 hex>
+#   dd:       dd<32 hex>          — random padding
+#   ee:       ee<32 hex><hex(домен)>  — fakeTLS; домен = TLS_DOMAIN (флаг -D),
+#                               клиент использует его как SNI в TLS ClientHello
 get_client_secret() {
-    if [ "${USE_DOMAIN:-no}" = "yes" ] && [ -n "${DOMAIN_NAME:-}" ]; then
-        CLIENT_SECRET="ee${SECRET}"
+    if [ "${USE_DOMAIN:-no}" = "yes" ] && [ -n "${TLS_DOMAIN:-}" ]; then
+        local domain_hex
+        domain_hex=$(printf '%s' "$TLS_DOMAIN" | xxd -ps | tr -d '\n')
+        CLIENT_SECRET="ee${SECRET}${domain_hex}"
     elif [ "${USE_DD_PREFIX:-no}" = "yes" ]; then
         CLIENT_SECRET="dd${SECRET}"
     else

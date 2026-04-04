@@ -17,7 +17,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Загружаем все модули в порядке зависимостей
-for _mod in lib_common lib_sni lib_config lib_install lib_service lib_manage; do
+for _mod in lib_common lib_sni lib_config lib_install lib_service lib_manage lib_docker; do
     # shellcheck source=/dev/null
     source "$MODULES_DIR/${_mod}.sh"
 done
@@ -38,14 +38,78 @@ _install_from_manager() {
 }
 
 ################################################################################
-# Главное меню
+# Определение типа установки
+################################################################################
+
+# Возвращает: "binary", "docker", "both" или "none"
+_detect_install_type() {
+    local has_binary=false has_docker=false
+    [ -f "$MTPROXY_BINARY" ] && [ -f "$CONFIG_FILE" ] && has_binary=true
+    [ -f "$DOCKER_COMPOSE_FILE" ] && has_docker=true
+    if $has_binary && $has_docker; then echo "both"
+    elif $has_binary;               then echo "binary"
+    elif $has_docker;               then echo "docker"
+    else                                 echo "none"
+    fi
+}
+
+# Предлагает выбор типа установки, если ничего не установлено
+_prompt_install_type() {
+    while true; do
+        clear
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}          MTProxy Manager${NC}"
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+        echo
+        echo -e "${YELLOW}MTProxy не установлен. Выберите вариант:${NC}"
+        echo
+        echo "  1) Binary  — официальный C-бинарник, компилируется из исходников"
+        echo "  2) Docker  — zero-configuration контейнер (требует Docker)"
+        echo "  0) Выход"
+        echo
+        read -p "Выберите: " choice
+        case $choice in
+            1) check_ubuntu; _install_from_manager; return ;;
+            2) run_docker_install; return ;;
+            0) exit 0 ;;
+            *) print_error "Неверный выбор" ;;
+        esac
+    done
+}
+
+# Предлагает выбор, если установлены оба варианта
+_prompt_select_type() {
+    while true; do
+        clear
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+        echo -e "${BLUE}          MTProxy Manager${NC}"
+        echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
+        echo
+        echo -e "${CYAN}Обнаружены оба варианта установки:${NC}"
+        echo
+        echo "  1) Binary  — C-бинарник (/opt/MTProxy)"
+        echo "  2) Docker  — контейнер (/opt/mtproto-proxy)"
+        echo "  0) Выход"
+        echo
+        read -p "Управлять: " choice
+        case $choice in
+            1) show_menu; return ;;
+            2) show_docker_menu; return ;;
+            0) exit 0 ;;
+            *) print_error "Неверный выбор" ;;
+        esac
+    done
+}
+
+################################################################################
+# Главное меню (Binary)
 ################################################################################
 
 show_menu() {
     while true; do
         clear
         echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
-        echo -e "${BLUE}          MTProxy Official — Управление${NC}"
+        echo -e "${BLUE}          MTProxy Binary — Управление${NC}"
         echo -e "${BLUE}═══════════════════════════════════════════════════════════${NC}"
         echo
 
@@ -118,37 +182,123 @@ show_menu() {
 ################################################################################
 
 if [ $# -eq 0 ]; then
-    check_installation
-    show_menu
+    case $(_detect_install_type) in
+        binary) show_menu ;;
+        docker) show_docker_menu ;;
+        both)   _prompt_select_type ;;
+        none)   _prompt_install_type ;;
+    esac
 else
+    _type=$(_detect_install_type)
     case "$1" in
         install)
-            check_root
-            check_ubuntu
-            _install_from_manager
+            case $_type in
+                none)   _prompt_install_type ;;
+                binary) check_ubuntu; _install_from_manager ;;
+                docker) run_docker_install ;;
+                both)   _prompt_select_type ;;
+            esac
             ;;
-        start)          check_installation; start_service ;;
-        stop)           check_installation; stop_service ;;
-        restart)        check_installation; restart_service ;;
-        status)         check_installation; show_status ;;
-        logs)           check_installation; show_logs ;;
-        follow-logs)    check_installation; follow_logs ;;
-        stats)          check_installation; show_stats ;;
-        info)           check_installation; show_connection_info ;;
+        start)
+            case $_type in
+                binary|both) check_installation; start_service ;;
+                docker)      cd "$DOCKER_DIR" && docker compose up -d && print_success "Запущен" ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        stop)
+            case $_type in
+                binary|both) check_installation; stop_service ;;
+                docker)      cd "$DOCKER_DIR" && docker compose down && print_success "Остановлен" ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        restart)
+            case $_type in
+                binary|both) check_installation; restart_service ;;
+                docker)      cd "$DOCKER_DIR" && docker compose restart && print_success "Перезапущен" ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        status)
+            case $_type in
+                binary|both) check_installation; show_status ;;
+                docker)      show_docker_status ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        logs)
+            case $_type in
+                binary|both) check_installation; show_logs ;;
+                docker)      show_docker_logs ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        follow-logs)
+            case $_type in
+                binary|both) check_installation; follow_logs ;;
+                docker)      follow_docker_logs ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        stats)
+            case $_type in
+                binary|both) check_installation; show_stats ;;
+                docker)      show_docker_status ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        info)
+            case $_type in
+                binary|both) check_installation; show_connection_info ;;
+                docker)      show_docker_info ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
         update-config)  check_installation; update_telegram_config ;;
-        change-secret)  check_installation; change_secret ;;
-        change-ad-tag)  check_installation; change_ad_tag ;;
-        change-ports)   check_installation; change_ports ;;
-        change-workers) check_installation; change_workers ;;
+        change-secret)
+            case $_type in
+                binary|both) check_installation; change_secret ;;
+                docker)      docker_change_secret ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        change-ad-tag)
+            case $_type in
+                binary|both) check_installation; change_ad_tag ;;
+                docker)      docker_change_ad_tag ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        change-ports)
+            case $_type in
+                binary|both) check_installation; change_ports ;;
+                docker)      docker_change_port ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
+        change-workers)
+            case $_type in
+                binary|both) check_installation; change_workers ;;
+                docker)      docker_change_workers ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
         rebuild)        check_installation; rebuild_binary ;;
-        uninstall)      check_installation; uninstall ;;
+        uninstall)
+            case $_type in
+                binary|both) check_installation; uninstall ;;
+                docker)      docker_uninstall ;;
+                none)        print_error "MTProxy не установлен" ;;
+            esac
+            ;;
         help|--help|-h)
-            echo "MTProxy Official — Управление"
+            echo "MTProxy Manager — Управление"
             echo
             echo "Использование: mtproxy [команда]"
             echo
-            echo "Команды:"
-            echo "  install          — Установить / переустановить MTProxy"
+            echo "Команды (Binary и Docker):"
+            echo "  install          — Установить / переустановить"
             echo "  start            — Запустить"
             echo "  stop             — Остановить"
             echo "  restart          — Перезапустить"
@@ -157,16 +307,17 @@ else
             echo "  follow-logs      — Следить за логами (live)"
             echo "  stats            — Статистика прокси"
             echo "  info             — Информация для подключения"
-            echo "  update-config    — Обновить конфигурацию Telegram"
             echo "  change-secret    — Изменить секрет"
             echo "  change-ad-tag    — Изменить AD Tag"
-            echo "  change-ports     — Изменить порты"
+            echo "  change-ports     — Изменить порт"
             echo "  change-workers   — Изменить количество воркеров"
-            echo "  rebuild          — Пересобрать из исходников"
-            echo "  uninstall        — Удалить MTProxy"
-            echo "  help             — Эта справка"
+            echo "  uninstall        — Удалить"
             echo
-            echo "Без аргументов — интерактивное меню"
+            echo "Команды только для Binary:"
+            echo "  update-config    — Обновить конфигурацию Telegram"
+            echo "  rebuild          — Пересобрать из исходников"
+            echo
+            echo "Без аргументов — интерактивное меню (автоопределение типа)"
             ;;
         *)
             print_error "Неизвестная команда: $1"

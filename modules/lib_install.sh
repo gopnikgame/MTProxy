@@ -134,7 +134,8 @@ clone_and_build_mtproxy() {
         fi
 
         if [ -f "$CONFIG_FILE" ]; then
-            local backup="$INSTALL_DIR/.env.backup.$(date +%Y%m%d_%H%M%S)"
+            # Бекап вне INSTALL_DIR — иначе rm -rf удалит его вместе с директорией
+            local backup="/root/.mtproxy.env.backup.$(date +%Y%m%d_%H%M%S)"
             cp "$CONFIG_FILE" "$backup"
             print_success "Конфигурация сохранена: $backup"
         fi
